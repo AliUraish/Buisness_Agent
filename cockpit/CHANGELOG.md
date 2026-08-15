@@ -2,6 +2,23 @@
 
 All notable changes to Cockpit are documented here.
 
+## [0.23.0.0] - 2026-08-15
+
+### Changed
+- Product is **Bob the Busines** on
+  [AliUraish/Buisness_Agent](https://github.com/AliUraish/Buisness_Agent).
+  Every agent works that repo. Repo Agent opens PRs under `product/`;
+  Terac humans review, then merge.
+
+## [0.22.0.0] - 2026-08-15
+
+### Removed
+- AgentBasis product targeting: subscribe pages (`/subscribe`,
+  `site/subscribe.html`), agentbasis.co copy in Terac/Linq, and the
+  hardcoded `AgentBasis/agentbasis-python-sdk` GitHub pin + ship catalog.
+  Product now follows `GITHUB_REPO`. Agents ship under `product/` once
+  that repo is set.
+
 ## [0.21.0.0] - 2026-08-15
 
 ### Changed
