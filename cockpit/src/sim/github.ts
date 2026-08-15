@@ -1,4 +1,4 @@
-// Thin client for GET /api/github/* — the token stays on the backend.
+// Thin client for /api/github/* — the token stays on the backend.
 
 export interface GithubCommit {
   sha: string
@@ -97,6 +97,64 @@ export async function fetchGithubScan(repo?: string | null): Promise<GithubScan>
     return {
       ...blankGithubScan(),
       lastScanAt: Date.now(),
+      error: 'Backend not reachable. Run npm run dev in /backend.',
+    }
+  } finally {
+    clearTimeout(t)
+  }
+}
+
+export async function shipGithubFeature(input: {
+  slug: string
+  name: string
+  summary: string
+  brief: string
+  file: string
+}): Promise<{
+  live: boolean
+  merged: boolean
+  number: number
+  title: string
+  branch: string
+  file: string
+  sha: string
+  url: string | null
+  error: string | null
+}> {
+  const ctl = new AbortController()
+  const t = setTimeout(() => ctl.abort(), 90000)
+  try {
+    const res = await fetch('/api/github/ship', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+      signal: ctl.signal,
+    })
+    const json = await res.json()
+    if (!res.ok) {
+      return {
+        live: false,
+        merged: false,
+        number: 0,
+        title: '',
+        branch: '',
+        file: input.file,
+        sha: '',
+        url: null,
+        error: typeof json?.error === 'string' ? json.error : `Backend ${res.status}`,
+      }
+    }
+    return json
+  } catch {
+    return {
+      live: false,
+      merged: false,
+      number: 0,
+      title: '',
+      branch: '',
+      file: input.file,
+      sha: '',
+      url: null,
       error: 'Backend not reachable. Run npm run dev in /backend.',
     }
   } finally {
