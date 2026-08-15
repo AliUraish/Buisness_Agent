@@ -67,7 +67,7 @@
   <div class="wrap">
     <div class="brand">Terac · ship review · human in the loop</div>
     <h1>Should we ship this?</h1>
-    <p class="meta">Agents opened this change on AgentBasis. Open the PR, read the diff, then answer. Same answers go into Terac.</p>
+    <p class="meta">Agents at Bob the Busines opened this change on AliUraish/Buisness_Agent. Open the PR, read the diff, then answer. Same answers go into Terac.</p>
 
     <div class="card">
       <div class="k">Feature / commit</div>
@@ -105,11 +105,11 @@
     const feature = q.get('feature')
     const pr = q.get('pr')
     const prTitle = q.get('prTitle')
-    const repo = q.get('repo') || 'AgentBasis/agentbasis-python-sdk'
+    const repo = q.get('repo') || 'AliUraish/Buisness_Agent'
     const files = q.get('files')
     const brief = q.get('brief') || q.get('post')
-    const prUrl = q.get('prUrl') || (pr ? `https://github.com/${repo}/pull/${pr}` : `https://github.com/${repo}`)
-    const repoUrl = `https://github.com/${repo}`
+    const prUrl = q.get('prUrl') || (repo && pr ? `https://github.com/${repo}/pull/${pr}` : repo ? `https://github.com/${repo}` : '#')
+    const repoUrl = repo ? `https://github.com/${repo}` : '#'
     if (feature) set('feature', feature)
     if (pr || prTitle) set('pr-line', [pr ? `PR #${pr}` : '', prTitle].filter(Boolean).join(' · '))
     if (brief) set('brief', brief)
