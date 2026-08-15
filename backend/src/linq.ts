@@ -36,9 +36,9 @@ export function paymentLink(): string | null {
 
 export function onboardText(link: string): string {
   return [
-    "You're in. AgentBasis is the OS for AI agents — $9/month, cancel anytime.",
+    "You're in. Bob the Busines — the company that runs itself.",
     `Subscribe: ${link}`,
-    'Product: https://agentbasis.co',
+    'Product: https://github.com/AliUraish/Buisness_Agent',
   ].join('\n')
 }
 
