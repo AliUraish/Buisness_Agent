@@ -42,11 +42,13 @@ function GithubBanner() {
             <>
               {job ? (
                 <>
-                  Shipping <b>{job.feature}</b> to AgentBasis/agentbasis-python-sdk
+                  Shipping <b>{job.feature}</b>
+                  {g.repo ? <> to <b>{g.repo}</b></> : null}
                 </>
               ) : (
                 <>
-                  Researching and shipping on <b>AgentBasis/agentbasis-python-sdk</b>
+                  Researching and shipping
+                  {g.repo ? <> on <b>{g.repo}</b></> : <> — set GITHUB_REPO</>}
                 </>
               )}
             </>
