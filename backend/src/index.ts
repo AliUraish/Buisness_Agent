@@ -35,10 +35,67 @@ function send(res: http.ServerResponse, status: number, body: unknown) {
   res.end(status === 204 ? undefined : JSON.stringify(body))
 }
 
+function esc(s: string) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
 function sendHtml(res: http.ServerResponse, file: string) {
   let html = readFileSync(fileURLToPath(new URL(file, import.meta.url)), 'utf8')
   const link = paymentLink() ?? '#'
   html = html.replaceAll('__STRIPE_LINK__', link)
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Access-Control-Allow-Origin': '*' })
+  res.end(html)
+}
+
+function githubHref(raw: string, fallback: string) {
+  try {
+    const u = new URL(raw)
+    if (u.protocol === 'https:' && u.hostname === 'github.com') return u.toString()
+  } catch {
+    // fall through
+  }
+  return fallback
+}
+
+async function sendReview(res: http.ServerResponse, url: URL) {
+  let html = readFileSync(fileURLToPath(new URL('./review.html', import.meta.url)), 'utf8')
+  const q = url.searchParams
+  let feature = q.get('feature') || ''
+  let pr = q.get('pr') || ''
+  let prTitle = q.get('prTitle') || ''
+  let files = q.get('files') || ''
+  let brief = q.get('brief') || q.get('post') || ''
+  let repo = q.get('repo') || 'AgentBasis/agentbasis-python-sdk'
+  let prUrl = q.get('prUrl') || ''
+
+  if (!feature || !pr) {
+    try {
+      const scan = await scanRepo()
+      repo = scan.repo || repo
+      const feat = scan.features[0]
+      const open = scan.prs.find((p) => p.state === 'open') ?? scan.prs[0]
+      if (!feature) feature = feat?.name || open?.title || 'Latest change'
+      if (!pr && (feat?.pr || open?.number)) pr = String(feat?.pr ?? open?.number ?? '')
+      if (!prTitle) prTitle = open?.title || feat?.summary || ''
+      if (!brief) brief = feat?.summary || open?.title || ''
+    } catch {
+      // placeholders below are enough
+    }
+  }
+
+  const repoUrl = `https://github.com/${repo}`
+  if (!prUrl) prUrl = pr ? `${repoUrl}/pull/${pr}` : repoUrl
+  prUrl = githubHref(prUrl, repoUrl)
+  const prLine = [pr ? `PR #${pr}` : '', prTitle].filter(Boolean).join(' · ') || 'Open the repo for the latest commit / PR'
+
+  html = html
+    .replaceAll('__FEATURE__', esc(feature || 'Latest AgentBasis change'))
+    .replaceAll('__PR_LINE__', esc(prLine))
+    .replaceAll('__BRIEF__', esc(brief || 'Open the PR, read the diff, then answer below.'))
+    .replaceAll('__PR_URL__', prUrl)
+    .replaceAll('__REPO_URL__', repoUrl)
+    .replaceAll('__FILES__', esc(files || '(listed in the PR)'))
+
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Access-Control-Allow-Origin': '*' })
   res.end(html)
 }
@@ -265,7 +322,7 @@ const server = http.createServer(async (req, res) => {
       return
     }
     if (req.method === 'GET' && (url.pathname === '/review' || url.pathname === '/review.html')) {
-      sendHtml(res, './review.html')
+      await sendReview(res, url)
       return
     }
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/subscribe' || url.pathname === '/subscribe.html')) {
