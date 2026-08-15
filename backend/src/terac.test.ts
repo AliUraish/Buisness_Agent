@@ -138,10 +138,25 @@ describe('parseShipVerdict', () => {
     const r = parseShipVerdict([{ key: 'verdict', answer: 'Reject — research or PR does not hold' }])
     expect(r.verdict).toBe('rejected')
   })
+
+  it('ships only when yes + code is ready', () => {
+    const yes = parseShipVerdict([
+      { key: 'ship', answer: 'Yes — ship it' },
+      { key: 'code', answer: 'Yes — code is ready to merge' },
+    ])
+    expect(yes.verdict).toBe('approved')
+    const ideaOnly = parseShipVerdict([
+      { key: 'ship', answer: 'Yes — ship it' },
+      { key: 'code', answer: 'No — not perfect, needs work' },
+    ])
+    expect(ideaOnly.verdict).toBe('rejected')
+    const no = parseShipVerdict([{ key: 'ship', answer: 'No — do not ship' }])
+    expect(no.verdict).toBe('rejected')
+  })
 })
 
 describe('shipOpportunityBody', () => {
-  it('asks the expert to verify research and the PR together', () => {
+  it('asks the human: ship this PR, then is the code ready', () => {
     const body = shipOpportunityBody('p1', {
       kind: 'verify',
       feature: 'SSO',
@@ -151,24 +166,21 @@ describe('shipOpportunityBody', () => {
       prNumber: 81,
       files: 'src/auth/sso.ts',
     })
-    const verdict = body.screening_questions.find((q: any) => q.key === 'verdict')!
-    expect(verdict.answers[0].text).toMatch(/Approve/)
-    expect(verdict.answers[1].text).toMatch(/Reject/)
-    // the reviewer interface: research, feature, and the PUBLIC PR link in one doc
+    const ship = body.screening_questions.find((q: any) => q.key === 'ship')!
+    const code = body.screening_questions.find((q: any) => q.key === 'code')!
+    expect(ship.answers[0].text).toMatch(/Yes — ship/)
+    expect(ship.answers[1].text).toMatch(/do not ship/)
+    expect(code.answers[0].text).toMatch(/ready to merge/)
+    expect(code.display_condition.conditions[0].screening_question).toBe('ship')
     expect(body.description).toContain('Loopwork shipped SSO')
     expect(body.description).toContain('https://github.com/')
     expect(body.description).toContain('/pull/81')
     expect(body.description).toContain('src/auth/sso.ts')
-    // one human, cheapest legal study
+    expect(body.tasks[0].task_url).toContain('/review')
     expect(body.num_participants).toBe(1)
     expect(body.tasks[0].duration_minutes).toBe(5)
     expect(body.tasks[0].task_type).toBe('activity')
     expect(body.business_type).toBe('b2c')
-    expect(body.num_participants).toBe(1)
-    // per-item checks exist for each section
-    for (const key of ['research_check', 'feature_check', 'pr_check']) {
-      expect(body.screening_questions.some((q: any) => q.key === key)).toBe(true)
-    }
   })
 })
 
