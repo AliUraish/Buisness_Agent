@@ -1,0 +1,14 @@
+# secrets — never committed, at any depth
+.env
+*.env
+.env.*
+
+# dependencies & build artifacts
+node_modules/
+dist/
+tsconfig.tsbuildinfo
+
+# local state
+.gstack/
+.DS_Store
+*.local
