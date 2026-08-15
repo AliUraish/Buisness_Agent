@@ -161,3 +161,25 @@ export async function shipGithubFeature(input: {
     clearTimeout(t)
   }
 }
+
+export async function mergeGithubPr(number: number): Promise<{ live: boolean; merged: boolean; sha: string; error: string | null }> {
+  const ctl = new AbortController()
+  const t = setTimeout(() => ctl.abort(), 45000)
+  try {
+    const res = await fetch('/api/github/merge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ number }),
+      signal: ctl.signal,
+    })
+    const json = await res.json()
+    if (!res.ok) {
+      return { live: false, merged: false, sha: '', error: typeof json?.error === 'string' ? json.error : `Backend ${res.status}` }
+    }
+    return json
+  } catch {
+    return { live: false, merged: false, sha: '', error: 'Backend not reachable. Run npm run dev in /backend.' }
+  } finally {
+    clearTimeout(t)
+  }
+}
