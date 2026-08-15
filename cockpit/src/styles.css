@@ -1481,7 +1481,7 @@ a.terac-job:hover { color: var(--ink); }
 }
 .bubble-row { display: flex; }
 .bubble-row.customer { justify-content: flex-start; }
-.bubble-row.zeroco { justify-content: flex-end; }
+.bubble-row.business_agent { justify-content: flex-end; }
 .bubble {
   max-width: 72%;
   border-radius: var(--radius);
@@ -1490,11 +1490,11 @@ a.terac-job:hover { color: var(--ink); }
   line-height: 1.45;
 }
 .bubble.customer { background: #f1f1ef; color: var(--ink); }
-.bubble.zeroco { background: var(--panel); border: 1px solid rgba(0, 0, 0, 0.14); color: var(--ink); }
+.bubble.business_agent { background: var(--panel); border: 1px solid rgba(0, 0, 0, 0.14); color: var(--ink); }
 .bubble.ghost { border-style: dashed; }
 .bubble .dim { color: var(--ink-3); }
 .bubble-meta { font-size: 10px; color: var(--ink-3); margin-top: 4px; }
-.bubble-row.zeroco .bubble-meta { text-align: right; }
+.bubble-row.business_agent .bubble-meta { text-align: right; }
 .escalated-note {
   align-self: center;
   font-size: 11.5px;
@@ -1520,3 +1520,22 @@ a.terac-job:hover { color: var(--ink); }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.12); border-radius: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* bank review strip: who divided the money, who checked it */
+.bank-review {
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 18px;
+}
+.bank-review .testmode.live { border-color: var(--teal); color: var(--teal); }
+
+/* funding meter: Perflo pool with Stripe overflow */
+.funding { margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 5px; }
+.funding-row { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+.funding-label { color: var(--ink-2); flex: none; }
+.funding-row b { font-weight: 500; }
