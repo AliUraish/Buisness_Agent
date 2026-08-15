@@ -32,6 +32,7 @@ function GithubBanner() {
   const s = useEngineTick()
   const g = s.github
   const now = useNow(1000)
+  const job = [...s.shipJobs].reverse().find((j) => j.stage !== 'shipped' && j.stage !== 'rejected' && j.stage !== 'blocked')
   return (
     <div className="ship-banner open gh-banner">
       <div className="ship-inner">
@@ -39,7 +40,15 @@ function GithubBanner() {
         <span className="ship-title">
           {g.live ? (
             <>
-              Observing <b>AgentBasis/agentbasis-python-sdk</b> — not shipping
+              {job ? (
+                <>
+                  Shipping <b>{job.feature}</b> to AgentBasis/agentbasis-python-sdk
+                </>
+              ) : (
+                <>
+                  Researching and shipping on <b>AgentBasis/agentbasis-python-sdk</b>
+                </>
+              )}
             </>
           ) : (
             <>Waiting on GitHub — {g.error ?? 'set GITHUB_TOKEN in .env'}</>
@@ -309,35 +318,44 @@ const CHECK_LABEL: Record<BugCheck['status'], string> = {
 
 function CompetitionShipStrip() {
   const s = useEngineTick()
-  const job = [...s.shipJobs].reverse().find((j) => j.pr)
-  if (!job?.pr) return null
+  const job = [...s.shipJobs].reverse().find((j) => j.pr || j.stage === 'researching' || j.stage === 'briefed' || j.stage === 'building')
+  if (!job) return null
   return (
     <div className="bug-strip-wrap">
       <div className="kcol-head" style={{ margin: '0 0 8px' }}>
-        From competition <span className="num">PR #{job.pr.number}</span>
-        <span className="bug-src"> · {job.feature} · Terac {job.stage.replace(/-/g, ' ')}</span>
+        Shipping to GitHub {job.pr ? <span className="num">PR #{job.pr.number}</span> : null}
+        <span className="bug-src"> · {job.feature} · {job.stage.replace(/-/g, ' ')}</span>
       </div>
       <div className="bug-strip">
         <div className={'bug-card' + (job.stage === 'shipped' ? ' confirmed' : '')}>
           <div className="bug-head">
             <span className="bug-agent">Repo Agent</span>
-            <span className="bug-when num">{job.pr.branch}</span>
+            <span className="bug-when num">{job.pr?.branch ?? job.file}</span>
           </div>
-          <div className="bug-text">{job.pr.title}</div>
+          <div className="bug-text">{job.pr?.title ?? job.brief}</div>
           <div className="bug-verdict">
             {job.stage === 'shipped' ? (
-              <span className="v-confirmed">merged</span>
+              <span className="v-confirmed">merged on main</span>
             ) : job.stage === 'rejected' ? (
               <span className="v-notrepro">rejected</span>
-            ) : job.stage === 'awaiting-verify' ? (
-              <span className="dim">waiting on Terac — research → PR…</span>
+            ) : job.stage === 'blocked' ? (
+              <span className="v-notrepro">{job.gate.reason ?? 'blocked'}</span>
+            ) : job.stage === 'building' ? (
+              <span className="dim">revising {job.file}…</span>
+            ) : job.stage === 'pr-open' && job.pr?.merged ? (
+              <span className="dim">merged — marking shipped…</span>
             ) : job.stage === 'pr-open' ? (
-              <span className="dim">ready — Terac verify not armed</span>
+              <span className="dim">PR open</span>
             ) : (
               <span className="dim">{job.stage.replace(/-/g, ' ')}</span>
             )}
-            <span className="chip">{job.pr.file}</span>
-            <span className="chip num">{job.pr.sha}</span>
+            <span className="chip">{job.pr?.file ?? job.file}</span>
+            {job.pr && <span className="chip num">{job.pr.sha}</span>}
+            {job.pr?.url && (
+              <a className="chip" href={job.pr.url} target="_blank" rel="noreferrer">
+                github
+              </a>
+            )}
           </div>
         </div>
       </div>
@@ -402,14 +420,8 @@ export default function Product() {
   return (
     <div className="product">
       <GithubBanner />
-      {s.github.live ? (
-        <GithubBoard />
-      ) : (
-        <>
-          <ShipBanner />
-          <Kanban />
-        </>
-      )}
+      <ShipBanner />
+      {s.github.live ? <GithubBoard /> : <Kanban />}
       <CompetitionShipStrip />
       <BugStrip />
       <HealthStrip />
