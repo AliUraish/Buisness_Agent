@@ -27,12 +27,10 @@ npm run dev
    over for posting; Start drafts five writer posts for the selected item.
    Terac hires a cluster-matched expert via `POST /api/terac/hires`;
    Publisher posts (mock X).
-3. **Product** — GitHub observer for **AgentBasis/agentbasis-python-sdk**
-   only (no ship, no repo picker). Three columns: committed features
-   (merged PRs + Add/Enhance commits), pull requests, and the commit log.
-   Those features queue to Audience for posting. Customer bugs from
-   Support (Linq) land in the Bug reports strip and get checked against
-   this SDK.
+3. **Product** — GitHub observer for **AliUraish/Buisness_Agent**. Three
+   columns: committed features (merged PRs + Add/Enhance commits), pull
+   requests, and the commit log. Those features queue to Audience for
+   posting. Customer bugs from Support (Linq) land in the Bug reports strip.
 4. **Finance** — actual revenue line joining live MRR at the NOW hairline,
    P10–P90 forecast fan, campaign markers with cause→effect underlines,
    five-model forecaster ensemble (bull / bear / churn-hawk / base-rate /
@@ -58,14 +56,10 @@ npm run dev
    kicker ("This company cost $0.36 to operate today") and a spend-by-department
    donut, and the post strip with predicted-vs-actual engagement bars — hits get
    a green check, misses get an honest gray dash.
-6. **Competition** — three intel agents (Changelog Scout, Gap Analyst, Brief
-   Writer) watch rivals and forward gaps to product. Product then **ships
-   for real** on `AgentBasis/agentbasis-python-sdk`: Repo Agent opens a
-   `zeroco/` branch, writes a python module under `agentbasis/`, squash-merges,
-   and queues marketing. First ship ~10s after boot, then every ~3 minutes
-   (cap 6/session). Terac is **not** used (`backend/Agent.md`). Requires
-   `GITHUB_TOKEN` with push on that repo. Without a token the write fails
-   honestly — no fake merge.
+6. **Competition** — three intel agents watch rivals of **Bob the Busines**
+   and forward gaps to product. Repo Agent **opens a PR** on
+   `AliUraish/Buisness_Agent` (files under `product/`). Terac humans review
+   the PR, then it squash-merges. Requires `GITHUB_TOKEN` with push.
 7. **Investment** — the market desk. Five live crypto charts (BTC · ETH ·
    SOL · DOGE · AVAX) tick on a simulated Alpaca paper-trading feed. Five
    desk agents (Prudence, Momentum, Quant, Runway Guardian, Yield Scout)
