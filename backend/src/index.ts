@@ -1,4 +1,6 @@
 import http from 'node:http'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { PORT } from './env.ts'
 import {
   hireClaimReview,
@@ -12,20 +14,33 @@ import {
   type ShipInput,
   type TradeInput,
 } from './terac.ts'
-import { isLinqLive, sendSupportMessage } from './linq.ts'
+import { isLinqLive, paymentLink, sendOnboard, sendSupportMessage } from './linq.ts'
 import { isStripeLive, isWhopLive, stripeSummary, stripeToday, whopSummary } from './payments.ts'
+import { complete, llmStatus, type Provider, type Tier } from './llm.ts'
+import { dbStatus, getStateAll, listEvents, putState, saveEvent } from './db.ts'
+import { perfloSummary } from './perflo.ts'
+import { research, researchStatus } from './research.ts'
+import { hireAllocationReview, pollAllocationReview, type AllocationInput } from './terac.ts'
 import { isXLive, loadTryteracAudience, snapshotStatus } from './x.ts'
-import { isGithubLive, listRepos, scanRepo } from './github.ts'
+import { isGithubLive, listRepos, scanRepo, shipFeature } from './github.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'Content-Type',
-  'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+  'Access-Control-Allow-Methods': 'GET,POST,PUT,OPTIONS',
 }
 
 function send(res: http.ServerResponse, status: number, body: unknown) {
   res.writeHead(status, { 'Content-Type': 'application/json', ...CORS })
   res.end(status === 204 ? undefined : JSON.stringify(body))
+}
+
+function sendHtml(res: http.ServerResponse, file: string) {
+  let html = readFileSync(fileURLToPath(new URL(file, import.meta.url)), 'utf8')
+  const link = paymentLink() ?? '#'
+  html = html.replaceAll('__STRIPE_LINK__', link)
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Access-Control-Allow-Origin': '*' })
+  res.end(html)
 }
 
 async function readJson(req: http.IncomingMessage): Promise<any> {
@@ -82,16 +97,106 @@ const server = http.createServer(async (req, res) => {
       send(res, 200, await scanRepo(url.searchParams.get('repo')))
       return
     }
+    if (req.method === 'POST' && url.pathname === '/api/github/ship') {
+      const b = await readJson(req)
+      send(
+        res,
+        200,
+        await shipFeature({
+          slug: String(b?.slug ?? 'feature'),
+          name: String(b?.name ?? 'feature'),
+          summary: String(b?.summary ?? ''),
+          brief: String(b?.brief ?? ''),
+          file: String(b?.file ?? 'agentbasis/llms/feature.py'),
+        }),
+      )
+      return
+    }
     if (req.method === 'GET' && url.pathname === '/api/terac/status') {
       send(res, 200, { live: isLive() })
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/linq/status') {
-      send(res, 200, { live: isLinqLive() })
+      send(res, 200, { live: isLinqLive(), paymentLink: paymentLink() })
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/pay/status') {
       send(res, 200, { stripe: isStripeLive(), whop: isWhopLive() })
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/api/terac/allocations') {
+      const b = await readJson(req)
+      const input: AllocationInput = {
+        bankName: String(b?.bankName ?? 'the operating account'),
+        balance: Number(b?.balance ?? 0),
+        alloc: Array.isArray(b?.alloc) ? b.alloc.map((a: any) => ({ label: String(a?.label ?? ''), pct: Number(a?.pct ?? 0) })) : [],
+        rationale: String(b?.rationale ?? '').slice(0, 1500),
+      }
+      send(res, 200, await hireAllocationReview(input))
+      return
+    }
+    const alloc = url.pathname.match(/^\/api\/terac\/allocations\/([^/]+)$/)
+    if (req.method === 'GET' && alloc) {
+      send(res, 200, await pollAllocationReview(decodeURIComponent(alloc[1])))
+      return
+    }
+    if (req.method === 'GET' && url.pathname === '/api/research/status') {
+      send(res, 200, researchStatus())
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/api/research') {
+      const b = await readJson(req)
+      send(res, 200, await research(String(b?.query ?? ''), String(b?.system ?? 'You are a competitive intelligence researcher. Be concrete and cite sources.')))
+      return
+    }
+    if (req.method === 'GET' && url.pathname === '/api/perflo/summary') {
+      send(res, 200, await perfloSummary())
+      return
+    }
+    if (req.method === 'GET' && url.pathname === '/api/db/status') {
+      send(res, 200, await dbStatus())
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/api/db/events') {
+      const b = await readJson(req)
+      send(res, 200, {
+        ok: await saveEvent({
+          dept: String(b?.dept ?? 'ceo'),
+          agent: String(b?.agent ?? ''),
+          message: String(b?.message ?? ''),
+          chips: b?.chips,
+          delta: b?.delta != null ? String(b.delta) : undefined,
+        }),
+      })
+      return
+    }
+    if (req.method === 'GET' && url.pathname === '/api/db/events') {
+      send(res, 200, await listEvents(Number(url.searchParams.get('limit') ?? 100)))
+      return
+    }
+    if (req.method === 'PUT' && url.pathname === '/api/db/state') {
+      const b = await readJson(req)
+      send(res, 200, { ok: await putState(String(b?.key ?? ''), b?.value) })
+      return
+    }
+    if (req.method === 'GET' && url.pathname === '/api/db/state') {
+      send(res, 200, await getStateAll())
+      return
+    }
+    if (req.method === 'GET' && url.pathname === '/api/llm/status') {
+      send(res, 200, llmStatus())
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/api/llm/complete') {
+      const b = await readJson(req)
+      const result = await complete({
+        provider: (['anthropic', 'openai', 'gemini'].includes(b?.provider) ? b.provider : 'anthropic') as Provider,
+        tier: (b?.tier === 'smart' ? 'smart' : 'cheap') as Tier,
+        system: String(b?.system ?? '').slice(0, 2000),
+        prompt: String(b?.prompt ?? '').slice(0, 6000),
+        maxTokens: Number(b?.maxTokens ?? 200),
+      })
+      send(res, 200, result)
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/pay/today') {
@@ -106,6 +211,10 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/linq/send') {
       const b = await readJson(req)
       send(res, 200, await sendSupportMessage(String(b?.text ?? '')))
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/api/linq/onboard') {
+      send(res, 200, await sendOnboard())
       return
     }
     if (req.method === 'POST' && url.pathname === '/api/terac/hires') {
@@ -153,6 +262,14 @@ const server = http.createServer(async (req, res) => {
     const ship = url.pathname.match(/^\/api\/terac\/ships\/([^/]+)$/)
     if (req.method === 'GET' && ship) {
       send(res, 200, await pollShipReview(decodeURIComponent(ship[1])))
+      return
+    }
+    if (req.method === 'GET' && (url.pathname === '/review' || url.pathname === '/review.html')) {
+      sendHtml(res, './review.html')
+      return
+    }
+    if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/subscribe' || url.pathname === '/subscribe.html')) {
+      sendHtml(res, './subscribe.html')
       return
     }
     send(res, 404, { error: 'not found' })
