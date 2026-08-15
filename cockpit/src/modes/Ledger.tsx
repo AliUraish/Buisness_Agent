@@ -239,6 +239,7 @@ function PostLedger() {
   const s = useEngineTick()
   const now = useNow(30_000)
   const posts = [...s.posts].reverse()
+  if (posts.length === 0) return null
   const maxBar = Math.max(...posts.map((p) => Math.max(p.predicted, p.actual ?? 0)), 1)
   return (
     <div className="post-strip">
@@ -249,7 +250,7 @@ function PostLedger() {
             <div className="post-top">
               <span className="post-avatar">Z</span>
               <span className="post-who">
-                ZeroCo <span className="dim">@zeroco · {ago(p.at, now)}</span>
+                Business_Agent <span className="dim">@business_agent · {ago(p.at, now)}</span>
               </span>
               {p.actual == null ? (
                 <span className="post-verdict dim num">measuring…</span>
