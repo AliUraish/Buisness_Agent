@@ -1,6 +1,6 @@
 // Owns the Terac REST v2 hire. Keys stay here — the frontend never sees them.
 
-import { TERAC_API_KEY } from './env.ts'
+import { GITHUB_REPO, REVIEW_URL, STRIPE_PAYMENT_LINK, TERAC_API_KEY } from './env.ts'
 
 const BASE = 'https://terac.com/api/external/v2'
 
@@ -155,10 +155,10 @@ export function parseVerdict(answers: ScreeningAnswer[] | undefined | null): { v
   const parts = answersOf(verdictQ)
   const verdictAns = parts[0] ?? ''
   const notes = firstAnswer(byKey('notes')) || parts.slice(1).join(' ').trim()
-  const revised = /revise/i.test(verdictAns)
+  const revised = /revise|no —|too expensive|maybe/i.test(verdictAns)
   return {
     verdict: revised ? 'revised' : 'approved',
-    reason: notes || (revised ? 'Expert asked to revise unverifiable claims.' : 'Expert approved the draft as written.'),
+    reason: notes || (revised ? 'Expert would not subscribe as offered.' : 'Expert would subscribe as offered.'),
   }
 }
 
@@ -166,55 +166,90 @@ async function ensureProject(): Promise<string> {
   if (projectIdCache) return projectIdCache
   const listed = await call('/projects?limit=100')
   const rows: { id: string; name: string }[] = listed?.data ?? listed ?? []
-  const existing = Array.isArray(rows) ? rows.find((p) => /zeroco/i.test(p.name ?? '')) : undefined
+  const existing = Array.isArray(rows) ? rows.find((p) => /business_agent/i.test(p.name ?? '')) : undefined
   if (existing?.id) {
     projectIdCache = existing.id
     return existing.id
   }
-  const created = await call('/projects', { method: 'POST', body: JSON.stringify({ name: 'ZeroCo' }) })
+  const created = await call('/projects', { method: 'POST', body: JSON.stringify({ name: 'Business_Agent' }) })
   if (!created?.id) throw new Error('Terac did not return a project id')
   projectIdCache = created.id
   return created.id
 }
 
-export function opportunityBody(projectId: string, input: HireInput) {
+/** Cheapest legal 1-person hire: general pop, no AI interview, 5-minute activity. */
+export const CHEAP_HIRE = {
+  num_participants: 1,
+  business_type: 'b2c' as const,
+  unrestricted_audience: true,
+  expected_days_to_complete: 5,
+  device_types: ['desktop', 'mobile_ios', 'mobile_android'],
+}
+
+export const TASK_MINUTES = 5
+
+export function reviewPageUrl(params: Record<string, string | number | undefined | null> = {}): string {
+  const base = REVIEW_URL || 'http://127.0.0.1:8787/review'
+  const u = new URL(base)
+  for (const [k, v] of Object.entries(params)) {
+    if (v == null || v === '') continue
+    u.searchParams.set(k, String(v).slice(0, 400))
+  }
+  if (params.mode !== 'ship' && STRIPE_PAYMENT_LINK && !u.searchParams.has('link')) {
+    u.searchParams.set('link', STRIPE_PAYMENT_LINK)
+  }
+  return u.toString()
+}
+
+export function cheapActivity(title: string, description: string, url: string) {
   return {
-    title: `ZeroCo claim review — ${input.feature}`,
-    internal_title: `zeroco-${input.feature.replace(/\s+/g, '-').toLowerCase()}`,
+    sequence: 1,
+    task_type: 'activity',
+    review_type: 'auto_approve',
+    title,
+    description,
+    duration_minutes: TASK_MINUTES,
+    task_url: url,
+  }
+}
+
+export function opportunityBody(projectId: string, input: HireInput) {
+  const page = reviewPageUrl({ mode: 'claim', feature: input.feature, post: input.post })
+  return {
+    title: `Review AgentBasis — would you subscribe?`,
+    internal_title: `business-agent-${input.feature.replace(/\s+/g, '-').toLowerCase()}`,
     description:
-      `An autonomous company is about to post this to X. You are the only human in the loop.\n\n` +
-      `Voice: ${input.voice}. Needed: ${input.clusterTitle}.\n\n` +
-      `Post:\n"${input.post}"\n\n` +
-      `Approve only if every claim is verifiable (shipped, merged, in production). ` +
-      `Revise if it overclaims.`,
+      `You are the ONE human reviewing AgentBasis (the OS for AI agents). ~5 minutes.\n\n` +
+      `1. Open the task page and read the product brief.\n` +
+      `2. Open https://agentbasis.co and look at the real product.\n` +
+      `3. Come back and answer the three questions.\n\n` +
+      `They sell it as a $9/month Stripe subscription. Feature in this offer: ${input.feature}.\n` +
+      `Task page:\n${page}`,
     project_id: projectId,
-    num_participants: 1,
-    business_type: 'b2b',
-    unrestricted_audience: true,
-    expected_days_to_complete: 5,
-    device_types: ['desktop', 'mobile_ios', 'mobile_android'],
+    ...CHEAP_HIRE,
     screening_questions: [
       {
-        key: 'shipped_review',
-        text: 'Have you reviewed product or marketing copy for shipped software in the last 2 years?',
+        key: 'opened',
+        text: 'Did you open agentbasis.co and look at the product?',
         pick: 'one',
         answers: [
-          { text: 'Yes', qualify_logic: 'may' },
-          { text: 'No', qualify_logic: 'reject' },
+          { text: 'Yes — I opened it', qualify_logic: 'may' },
+          { text: 'No — I could not open it', qualify_logic: 'may' },
         ],
       },
       {
         key: 'verdict',
-        text: `Should ZeroCo publish this post as written?\n\n"${input.post}"`,
+        text: 'After seeing AgentBasis, would you subscribe at $9/month?',
         pick: 'one',
         answers: [
-          { text: 'Approve — post as written', qualify_logic: 'may', allow_free_text: true },
-          { text: 'Revise — claims are too strong', qualify_logic: 'may', allow_free_text: true },
+          { text: 'Yes — I would pay', qualify_logic: 'may', allow_free_text: true },
+          { text: 'No — too expensive or unclear', qualify_logic: 'may', allow_free_text: true },
+          { text: 'Maybe — if they changed one thing', qualify_logic: 'may', allow_free_text: true },
         ],
       },
       {
         key: 'notes',
-        text: 'One sentence: why, and what to change if revising.',
+        text: 'One sentence: why, and what to change if not yes.',
         pick: 'one',
         allow_paste: true,
         answers: [
@@ -224,15 +259,11 @@ export function opportunityBody(projectId: string, input: HireInput) {
       },
     ],
     tasks: [
-      {
-        sequence: 1,
-        task_type: 'interview',
-        review_type: 'auto_approve',
-        title: 'Confirm the verdict',
-        description: `Restate Approve or Revise, then one sentence of reasoning.\n\nPost:\n${input.post}`,
-        duration_minutes: 15,
-        task_url: 'https://terac.com',
-      },
+      cheapActivity(
+        'Read AgentBasis, then answer',
+        `Open the briefing, visit https://agentbasis.co, then answer the three questions.\n\n${page}`,
+        page,
+      ),
     ],
   }
 }
@@ -349,31 +380,24 @@ export function parseConfidence(answers: ScreeningAnswer[] | undefined | null): 
 
 export function tradeOpportunityBody(projectId: string, input: TradeInput) {
   const roiStr = `${input.roi >= 0 ? '+' : ''}${input.roi.toFixed(1)}%`
+  const page = reviewPageUrl({ mode: 'trade', feature: `${input.symbol} $${input.amount}`, post: `Deploy $${input.amount} into ${input.symbol}. Desk 30d ROI ${roiStr}. ${input.ranking}` })
   return {
     title: `ZeroCo trade review — ${input.symbol}`,
-    internal_title: `zeroco-trade-${input.symbol.toLowerCase()}-${Date.now()}`,
+    internal_title: `business-agent-trade-${input.symbol.toLowerCase()}-${Date.now()}`,
     description:
-      `An autonomous company's five-agent market desk ranked crypto assets by predicted 30d ROI ` +
-      `and wants to deploy $${input.amount} of treasury into ${input.symbol} (${input.name}). ` +
-      `You are the only human in the loop.\n\n` +
-      `Desk ranking: ${input.ranking}\n` +
-      `Consensus 30d ROI for ${input.symbol}: ${roiStr}\n\n` +
-      `State how confident you are that this is a reasonable deployment right now. ` +
-      `This is a paper-trading account; your confidence number rides on the fill.`,
+      `ONE human, ~5 minutes. An agent-run company just took Stripe subscription cash and wants to deploy $${input.amount} into ${input.symbol} (${input.name}).\n\n` +
+      `Desk ranking: ${input.ranking}\nConsensus 30d ROI: ${roiStr}\n\n` +
+      `Open the task page, then state confidence.\n${page}`,
     project_id: projectId,
-    num_participants: 1,
-    business_type: 'b2b',
-    unrestricted_audience: true,
-    expected_days_to_complete: 5,
-    device_types: ['desktop', 'mobile_ios', 'mobile_android'],
+    ...CHEAP_HIRE,
     screening_questions: [
       {
         key: 'crypto_experience',
-        text: 'Have you actively traded or analyzed crypto markets in the last 2 years?',
+        text: 'Have you looked at a crypto price in the last year?',
         pick: 'one',
         answers: [
           { text: 'Yes', qualify_logic: 'may' },
-          { text: 'No', qualify_logic: 'reject' },
+          { text: 'No', qualify_logic: 'may' },
         ],
       },
       {
@@ -401,15 +425,11 @@ export function tradeOpportunityBody(projectId: string, input: TradeInput) {
       },
     ],
     tasks: [
-      {
-        sequence: 1,
-        task_type: 'interview',
-        review_type: 'auto_approve',
-        title: 'Confirm your confidence level',
-        description: `Restate your confidence bucket for the ${input.symbol} deployment, then one sentence of reasoning.`,
-        duration_minutes: 15,
-        task_url: 'https://terac.com',
-      },
+      cheapActivity(
+        'Open the deploy brief',
+        `Look at the subscribe company deploying $${input.amount} into ${input.symbol}, then answer confidence.`,
+        page,
+      ),
     ],
   }
 }
@@ -571,65 +591,206 @@ export function parseShipVerdict(answers: ScreeningAnswer[] | undefined | null):
 } {
   const list = answers ?? []
   const byKey = (k: string) => list.find((a) => a.key === k)
-  const verdictQ =
-    byKey('verdict') ??
-    list.find((a) => answersOf(a).some((s) => /approve|reject|holds/i.test(s)))
-  const parts = answersOf(verdictQ)
-  const verdictAns = parts[0] ?? ''
-  const notes = firstAnswer(byKey('notes')) || parts.slice(1).join(' ').trim()
-  const rejected = /reject|does not hold|not ready/i.test(verdictAns)
+  const shipAns = firstAnswer(byKey('ship')) || firstAnswer(byKey('verdict')) || ''
+  const codeAns = firstAnswer(byKey('code'))
+  const notes =
+    firstAnswer(byKey('notes')) ||
+    answersOf(byKey('ship')).slice(1).join(' ').trim() ||
+    answersOf(byKey('verdict')).slice(1).join(' ').trim()
+  const shipYes = /yes — ship|approve/i.test(shipAns)
+  const noShip = /no —|do not ship|don't ship|reject|does not hold/i.test(shipAns)
+  const codeReady = /ready to merge|perfect/i.test(codeAns)
+  const notReady = /not perfect|needs work|not ready/i.test(codeAns)
+  const askedShip = Boolean(byKey('ship'))
+  const rejected = askedShip
+    ? noShip || !shipYes || notReady || !codeReady
+    : noShip || !/approve/i.test(shipAns)
   return {
     verdict: rejected ? 'rejected' : 'approved',
     reason:
       notes ||
-      (rejected
-        ? 'Expert rejected — the research or the PR does not hold up.'
-        : 'Expert verified research → PR. Agents may merge.'),
+      (noShip
+        ? 'Human said do not ship.'
+        : notReady
+          ? 'Human would ship the idea but the code is not ready.'
+          : 'Human approved ship — code is ready.'),
   }
 }
 
 function hasShipVerdict(s: any): boolean {
   const answers: ScreeningAnswer[] = s?.screening_answers ?? []
-  return answers.some((a) => a.key === 'verdict' || /approve|reject|holds|does not hold/i.test(firstAnswer(a)))
+  return answers.some(
+    (a) =>
+      a.key === 'ship' ||
+      a.key === 'verdict' ||
+      /yes — ship|do not ship|approve|reject|holds|does not hold/i.test(firstAnswer(a)),
+  )
 }
 
-export function shipOpportunityBody(projectId: string, input: ShipInput) {
-  const prLine = `PR #${input.prNumber ?? '?'} — ${input.prTitle ?? input.feature}\nFiles: ${input.files ?? '(see PR)'}`
+export interface AllocationInput {
+  bankName: string
+  balance: number
+  alloc: { label: string; pct: number }[]
+  rationale: string
+}
+
+export interface TeracAllocationReview {
+  live: boolean
+  jobId: string
+  dashboardUrl: string | null
+  quote: number | null
+  expert: string | null
+  verdict: 'approved' | 'adjust' | 'waiting' | 'error'
+  reason: string
+}
+
+export function allocationOpportunityBody(projectId: string, input: AllocationInput) {
+  const rows = input.alloc
+    .map((a) => `  ${a.label}: ${a.pct}%  (~$${Math.round((input.balance * a.pct) / 100).toLocaleString()})`)
+    .join('\n')
+  const page = reviewPageUrl({
+    mode: 'alloc',
+    feature: input.bankName,
+    post: `${input.bankName}: $${input.balance.toLocaleString()}\n${rows}\n${input.rationale}`,
+  })
   return {
-    title: `ZeroCo research→PR verify — ${input.feature}`,
-    internal_title: `zeroco-verify-${input.feature.replace(/\s+/g, '-').toLowerCase()}-${Date.now()}`,
+    title: `ZeroCo treasury review — $${input.balance.toLocaleString()}`,
+    internal_title: `business-agent-alloc-${Date.now()}`,
     description:
-      `An autonomous company (ZeroCo) researched a rival gap and drafted a pull request. ` +
-      `You are the only human in the loop. Verify the research AND the PR together.\n\n` +
-      `Rival: ${input.rival}. Feature: ${input.feature}.\n\n` +
-      `Research:\n${input.brief}\n\n${prLine}\n\n` +
-      `Approve only if (1) the gap is real and worth shipping, and (2) this PR actually covers it. ` +
-      `Reject if the research is weak, the PR is vapor, or they do not match.`,
+      `ONE human, ~5 minutes. ZeroCo's CFO Agent divided the operating account.\n\n` +
+      `== ACCOUNT ==\n${input.bankName}: $${input.balance.toLocaleString()}\n\n` +
+      `== PROPOSED DIVISION ==\n${rows}\n\n` +
+      `== CFO REASONING ==\n${input.rationale}\n\n` +
+      `Open the task page, then Approve or Adjust.\n${page}`,
     project_id: projectId,
-    num_participants: 1,
-    business_type: 'b2b',
-    unrestricted_audience: true,
-    expected_days_to_complete: 5,
-    device_types: ['desktop', 'mobile_ios', 'mobile_android'],
+    ...CHEAP_HIRE,
     screening_questions: [
       {
-        key: 'experience',
-        text: 'Have you reviewed product specs and production PRs in the last 2 years?',
+        key: 'finance_experience',
+        text: 'Have you seen a household or business budget in the last year?',
         pick: 'one',
         answers: [
           { text: 'Yes', qualify_logic: 'may' },
-          { text: 'No', qualify_logic: 'reject' },
+          { text: 'No', qualify_logic: 'may' },
         ],
       },
       {
         key: 'verdict',
-        text:
-          `Does the research → PR hold up for ${input.feature}?\n\n` +
-          `Research: ${input.brief}\n\n${prLine}`,
+        text: 'Your verdict on the CFO\'s division:',
         pick: 'one',
         answers: [
-          { text: 'Approve — research and PR hold up, ship it', qualify_logic: 'may', allow_free_text: true },
-          { text: 'Reject — research or PR does not hold', qualify_logic: 'may', allow_free_text: true },
+          { text: 'Approve — sensible division', qualify_logic: 'may', allow_free_text: true },
+          { text: 'Adjust — something is off (say what)', qualify_logic: 'may', allow_free_text: true },
+        ],
+      },
+      {
+        key: 'notes',
+        text: 'One sentence: why, and what to change if adjusting.',
+        pick: 'one',
+        allow_paste: true,
+        answers: [
+          { text: 'Notes below', qualify_logic: 'may', allow_free_text: true },
+          { text: 'No extra notes', qualify_logic: 'may' },
+        ],
+      },
+    ],
+    tasks: [cheapActivity('Open the treasury brief', 'Look at the split, then Approve or Adjust.', page)],
+  }
+}
+
+export async function hireAllocationReview(input: AllocationInput): Promise<TeracAllocationReview> {
+  if (!isLive()) {
+    return { live: false, jobId: '', dashboardUrl: null, quote: null, expert: null, verdict: 'error', reason: 'Set TERAC_API_KEY in the workspace .env.' }
+  }
+  const projectId = await ensureProject()
+  const created = await call('/opportunities', { method: 'POST', body: JSON.stringify(allocationOpportunityBody(projectId, input)) })
+  const id = created?.id as string | undefined
+  if (!id) throw new Error('Terac did not return an opportunity id')
+  const launched = await call(`/opportunities/${id}/launch`, { method: 'POST', body: JSON.stringify({}) })
+  const quoteCents = launched?.pricing?.cost_per_participant_cents ?? created?.pricing?.cost_per_participant_cents
+  return {
+    live: true,
+    jobId: id,
+    dashboardUrl: launched?.links?.dashboard?.study ?? created?.links?.dashboard?.study ?? null,
+    quote: Number.isFinite(quoteCents) ? Math.round(Number(quoteCents) / 100) : null,
+    expert: null,
+    verdict: 'waiting',
+    reason: 'Opportunity live — waiting on a human to review the division.',
+  }
+}
+
+export async function pollAllocationReview(jobId: string): Promise<Pick<TeracAllocationReview, 'verdict' | 'reason' | 'expert'>> {
+  const json = await call(`/opportunities/${encodeURIComponent(jobId)}/submissions?limit=25`)
+  const rows: any[] = json?.data ?? []
+  const done = rows.find((r) => ['awaiting_review', 'approved', 'screen_passed'].includes(r.status) || (r?.screening_answers ?? []).some((a: ScreeningAnswer) => a.key === 'verdict'))
+  if (!done) return { verdict: 'waiting', reason: 'Waiting on a human reviewer.', expert: null }
+  let answers: ScreeningAnswer[] = done.screening_answers ?? []
+  if (done.id) {
+    try {
+      const detail = await call(`/submissions/${encodeURIComponent(done.id)}`)
+      if (detail?.screening_answers) answers = detail.screening_answers
+    } catch {
+      // list payload is enough
+    }
+  }
+  const byKey = (k: string) => answers.find((a) => a.key === k)
+  const v = firstAnswer(byKey('verdict'))
+  const notes = firstAnswer(byKey('notes'))
+  const adjust = /adjust/i.test(v)
+  return {
+    verdict: adjust ? 'adjust' : 'approved',
+    reason: notes || (adjust ? 'Human flagged the division for adjustment.' : 'Human approved the division as sensible.'),
+    expert: done.participant_id ? `expert ${String(done.participant_id).slice(0, 8)}` : 'Terac expert',
+  }
+}
+
+export function shipOpportunityBody(projectId: string, input: ShipInput) {
+  const repo = GITHUB_REPO || 'AgentBasis/agentbasis-python-sdk'
+  const prUrl = input.prNumber ? `https://github.com/${repo}/pull/${input.prNumber}` : `https://github.com/${repo}`
+  const page = reviewPageUrl({
+    mode: 'ship',
+    feature: input.feature,
+    pr: input.prNumber,
+    prTitle: input.prTitle,
+    files: input.files,
+    repo,
+    brief: input.brief,
+    rival: input.rival,
+    prUrl,
+  })
+  const shipYes = 'Yes — ship it'
+  return {
+    title: `Ship review — ${input.feature}`,
+    internal_title: `business-agent-verify-${input.feature.replace(/\s+/g, '-').toLowerCase()}-${Date.now()}`,
+    description:
+      `You are a human in the ship loop. Agents opened this change. ~5 minutes.\n\n` +
+      `Feature: ${input.feature}${input.prTitle ? ` — ${input.prTitle}` : ''}\n` +
+      `Rival context: ${input.rival}\n${input.brief}\n\n` +
+      `PR: ${prUrl}\nRepo: https://github.com/${repo}\nFiles: ${input.files ?? '(in the PR)'}\n\n` +
+      `1. Open the form (and the PR).\n2. Should we ship?\n3. If yes — is the code ready?\n\n${page}`,
+    project_id: projectId,
+    ...CHEAP_HIRE,
+    screening_questions: [
+      {
+        key: 'ship',
+        text: `Should we ship "${input.feature}"? Open the PR first: ${prUrl}`,
+        pick: 'one',
+        answers: [
+          { text: shipYes, qualify_logic: 'may', allow_free_text: true },
+          { text: 'No — do not ship', qualify_logic: 'may', allow_free_text: true },
+        ],
+      },
+      {
+        key: 'code',
+        text: `You said ship. Open the repo and the PR. Is the code ready to merge?\nRepo: https://github.com/${repo}\nPR: ${prUrl}`,
+        pick: 'one',
+        display_condition: {
+          conditions: [{ screening_question: 'ship', answer: shipYes, operator: 'eq' }],
+          join: 'and',
+        },
+        answers: [
+          { text: 'Yes — code is ready to merge', qualify_logic: 'may', allow_free_text: true },
+          { text: 'No — not perfect, needs work', qualify_logic: 'may', allow_free_text: true },
         ],
       },
       {
@@ -644,15 +805,11 @@ export function shipOpportunityBody(projectId: string, input: ShipInput) {
       },
     ],
     tasks: [
-      {
-        sequence: 1,
-        task_type: 'interview',
-        review_type: 'auto_approve',
-        title: 'Confirm research → PR',
-        description: `Restate Approve or Reject for ${input.feature} / PR #${input.prNumber ?? '?'}, then one sentence: does the research match the PR?`,
-        duration_minutes: 15,
-        task_url: 'https://terac.com',
-      },
+      cheapActivity(
+        'Open the ship form — PR + repo',
+        `Read the feature, open ${prUrl} and https://github.com/${repo}, then: ship? if yes, is the code ready?`,
+        page,
+      ),
     ],
   }
 }
