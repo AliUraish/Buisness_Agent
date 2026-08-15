@@ -108,16 +108,9 @@ describe('competition + investment seed state', () => {
     expect(SHIP_TERAC_ARMED).toBe(false)
   })
 
-  it('ships unique python modules under agentbasis/, capped per session', () => {
-    expect(MAX_SDK_SHIPS).toBe(6)
-    expect(SDK_SHIPS.length).toBe(MAX_SDK_SHIPS)
-    const files = SDK_SHIPS.map((s) => s.file)
-    expect(new Set(files).size).toBe(files.length)
-    for (const s of SDK_SHIPS) {
-      expect(s.file.startsWith('agentbasis/')).toBe(true)
-      expect(s.file.endsWith('.py')).toBe(true)
-      expect(s.file).not.toMatch(/^src\//)
-    }
+  it('ships nothing until a product repo is named', () => {
+    expect(MAX_SDK_SHIPS).toBe(0)
+    expect(SDK_SHIPS).toHaveLength(0)
   })
 
   it('at least one rival has a capability we do not — research has a gap to forward', () => {

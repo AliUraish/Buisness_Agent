@@ -13,11 +13,14 @@ import { extractJson, fetchLlmStatus, llmComplete, LlmProvider, LlmStatus } from
 import { fetchDbStatus, journalEvent, loadJournal, loadState, putState } from './persist'
 import { fetchPerfloSummary } from './perflo'
 import { fetchResearchStatus, runResearch } from './research'
-import { blankGithubScan, fetchGithubScan, shipGithubFeature, type GithubScan, type MarketingNeed } from './github'
+import { blankGithubScan, fetchGithubScan, mergeGithubPr, shipGithubFeature, type GithubScan, type MarketingNeed } from './github'
 
 export type { GithubScan, GithubCommit, GithubPr, MarketingNeed } from './github'
 
 export type Dept = 'product' | 'marketing' | 'finance' | 'ceo' | 'alerts'
+
+export const COMPANY_NAME = 'Bob the Busines'
+export const PRODUCT_REPO = 'AliUraish/Buisness_Agent'
 
 export const DEPT_COLOR: Record<Dept, string> = {
   product: '#7c6ff0',
@@ -132,7 +135,7 @@ export interface IntelMove {
   sources?: string[] // real citation domains when Perplexity researched it
 }
 
-// ── Ship pipeline: research → Repo Agent revises the python SDK → merge ──
+// ── Ship pipeline: research → Repo Agent revises the product repo → merge ──
 export type ShipStage =
   | 'researching'
   | 'briefed'
@@ -777,54 +780,41 @@ const RESEARCHERS: { agent: string; mono: string }[] = [
 
 export const SDK_SHIPS: { id: string; name: string; summary: string; file: string; rival: string; brief: string }[] = [
   {
-    id: 'openai-tool-spans',
-    name: 'OpenAI tool_use spans',
-    summary: 'Copy tool_use names and counts onto the OpenAI request span',
-    file: 'agentbasis/llms/openai/tool_spans.py',
-    rival: 'OpenLLMetry',
-    brief: 'OpenLLMetry records OpenAI tool_use names. agentbasis-python-sdk did not — Gap Analyst flagged it.',
+    id: 'terac-ship-form',
+    name: 'Terac ship form',
+    summary: 'Humans in the loop see the PR and answer: should we ship, is the code ready',
+    file: 'product/terac-ship-form.md',
+    rival: 'Terac',
+    brief: 'Terac sells human review. Bob the Busines already hires them — this notes the ship form on /review for AliUraish/Buisness_Agent.',
   },
   {
-    id: 'anthropic-stream-retry',
-    name: 'Anthropic stream retry spans',
-    summary: 'Retry/backoff spans when Messages.stream() drops mid-generator',
-    file: 'agentbasis/llms/anthropic/stream_retry.py',
-    rival: 'LangSmith',
-    brief: 'LangSmith traces stream retries. Our Anthropic wrap ended the span on the first drop.',
+    id: 'github-product-scan',
+    name: 'GitHub product scan',
+    summary: 'Repo Agent scans AliUraish/Buisness_Agent and queues committed features to marketing',
+    file: 'product/github-product-scan.md',
+    rival: 'Cognition',
+    brief: 'Devin-class agents ship in the repo. Bob the Busines scans this cockpit repo and opens PRs under product/.',
   },
   {
-    id: 'gemini-token-metrics',
-    name: 'Gemini token metrics',
-    summary: 'Prompt/completion token counts as span attributes on async Gemini calls',
-    file: 'agentbasis/llms/gemini/token_metrics.py',
-    rival: 'OpenLLMetry',
-    brief: 'Gemini async calls were missing token metrics. Changelog Scout saw OpenLLMetry shipping them last week.',
+    id: 'linq-onboard',
+    name: 'Linq onboard text',
+    summary: 'Support Writer texts the Stripe subscribe link after a customer texts in',
+    file: 'product/linq-onboard.md',
+    rival: 'Lindy',
+    brief: 'Lindy automates customer messaging. Bob the Busines already texts onboarders via Linq — this is the product note.',
   },
   {
-    id: 'payload-redaction',
-    name: 'payload redaction',
-    summary: 'Redact prompts and completions before they hit the exporter',
-    file: 'agentbasis/context_redaction.py',
-    rival: 'LangSmith',
-    brief: 'LangSmith redacts PII in traces by default. We were exporting raw prompts.',
-  },
-  {
-    id: 'langchain-span-events',
-    name: 'LangChain span events',
-    summary: 'Emit span events for LangChain tool and chain starts',
-    file: 'agentbasis/frameworks/langchain/span_events.py',
-    rival: 'LangSmith',
-    brief: 'LangChain users compare us to LangSmith. We had traces, not tool/chain events.',
-  },
-  {
-    id: 'stream-cancel-events',
-    name: 'stream cancel events',
-    summary: 'Record an exception event when a stream is cancelled by the caller',
-    file: 'agentbasis/llms/anthropic/cancel_events.py',
-    rival: 'OpenLLMetry',
-    brief: 'Cancelled Anthropic streams left orphan spans. Research: record the cancel as an event and close the span.',
+    id: 'rival-watch',
+    name: 'rival watch',
+    summary: 'Changelog Scout / Gap Analyst / Brief Writer research rivals and forward a ship brief',
+    file: 'product/rival-watch.md',
+    rival: 'Terac',
+    brief: 'Human-in-the-loop shops watch the market slowly. Bob the Busines intel desk already sweeps rivals and hands a brief to Repo Agent.',
   },
 ]
+
+export const SHIP_TERAC_ARMED = true
+export const MAX_SDK_SHIPS = 4
 
 function blankShipGate(): ShipGate {
   return {
@@ -838,10 +828,6 @@ function blankShipGate(): ShipGate {
     reason: null,
   }
 }
-
-// Never hire Terac on the SDK ship loop (backend/Agent.md). Research → GitHub merge.
-export const SHIP_TERAC_ARMED = false
-export const MAX_SDK_SHIPS = 6
 
 const POST_TEMPLATES = [
   (f: string) => `${f} is live. Shipped, merged, and in your account right now — not on a roadmap. →`,
@@ -1023,56 +1009,55 @@ const SUPPORT_ISSUES: { topic: TicketTopic; priority: 'P1' | 'P2' | 'P3'; text: 
   {
     topic: 'bug',
     priority: 'P1',
-    text: 'Anthropic Messages.stream() spans never close — traces pile up in our collector after a few minutes.',
-    reply: 'Reproduced on agentbasis-python-sdk main — _WrappedStreamManager dropped the end span on generator exit. I patched the wrap and your missed spans should stop landing. Restart the instrumented process to pick it up.',
-    followup: 'Collector is clean now. Thanks.',
+    text: 'The latest ship never showed up in the cockpit after merge.',
+    reply: 'Reproduced on main — the scan cache held the previous commit. I forced a rescan; your feature should be in Product now.',
+    followup: 'Seeing it in Product. Thanks.',
   },
   {
     topic: 'bug',
     priority: 'P2',
-    text: 'Gemini instrumentation misses tool_use names on async calls — we only see the parent span.',
-    reply: 'Confirmed — async Gemini tool_use attributes were never copied onto the child span. That’s the gap PR #1/#2 were closing. Upgrade to the latest sdk; tool names should show on async calls.',
-    followup: 'Seeing tool names on the async path now.',
+    text: 'Support Writer queued a text but I never got the iMessage.',
+    reply: 'Linq only delivers after you text the org number first. Send any message to that number, then we can reply.',
+    followup: 'That was it — got the follow-up.',
   },
   {
     topic: 'billing',
     priority: 'P2',
-    text: 'Did the Python SDK start double-counting token usage? Our Gemini bill jumped after we upgraded.',
-    reply: 'The tracer was attributing both the stream chunk and the final message. I flagged your project so usage is counted once; the extra Gemini tokens from last week are noted on the invoice as a credit.',
-    followup: 'Credit showed up. Appreciate it.',
+    text: 'Stripe charged me twice for the same month.',
+    reply: 'The second charge was a test-mode duplicate. I flagged it; you should see a reversal on the test dashboard.',
+    followup: 'Reversal showed up. Appreciate it.',
   },
   {
     topic: 'how-to',
     priority: 'P3',
-    text: 'How do I wrap AsyncMessages.stream so OpenTelemetry gets tool count attributes?',
-    reply: 'Use the instrumented AsyncMessages from agentbasis — don’t wrap stream() yourself. Tool count and tool_use names are added on the request span automatically after PR #4. Call `instrument()` once at process start.',
-    followup: 'That was the missing piece, thanks!',
+    text: 'How do I point the agents at my own GitHub repo?',
+    reply: 'Set GITHUB_REPO=owner/name in .env and restart the backend. Product scans that repo only.',
+    followup: 'Scan is on our repo now, thanks!',
   },
   {
     topic: 'feature',
     priority: 'P3',
-    text: 'Any plans to instrument tool_use names on Anthropic the way you did for Gemini?',
-    reply: 'Shipped — Anthropic tool improvement merged as PR #4. Upgrade agentbasis-python-sdk and the request spans carry tool count + tool use names.',
-    followup: 'We’ll bump the pin this afternoon.',
+    text: 'Can the ship loop open a PR and wait for a human yes/no before merge?',
+    reply: 'That’s the Terac ship form — humans get Should we ship this? and is the code ready? before merge.',
+    followup: 'We’ll use that on the next change.',
   },
   {
     topic: 'churn-risk',
     priority: 'P1',
-    text: 'Honestly considering dropping the SDK and wiring OpenTelemetry ourselves — Gemini traces have been incomplete for weeks.',
-    reply: '', // churn risk is never auto-answered — routed to the human queue
+    text: 'Honestly considering dropping this — the agents keep shipping to the wrong product.',
+    reply: '',
     followup: '',
   },
 ]
 
-// what the engineer agent finds per bug (keyed by the customer's report)
 const BUG_FINDINGS: Record<string, { finding: string; chips: string[] }> = {
-  'Anthropic Messages.stream() spans never close — traces pile up in our collector after a few minutes.': {
-    finding: '_WrappedStreamManager does not emit the end span when the generator exits. Reproduced on main.',
-    chips: ['_WrappedStreamManager', 'PR #4'],
+  'The latest ship never showed up in the cockpit after merge.': {
+    finding: 'GitHub scan cache did not invalidate after merge. Reproduced on main.',
+    chips: ['scan cache', 'Product'],
   },
-  'Gemini instrumentation misses tool_use names on async calls — we only see the parent span.': {
-    finding: 'Async Gemini path never copies tool_use names onto the child span. Reproduced on main.',
-    chips: ['gemini instrumentation', 'PR #1'],
+  'Support Writer queued a text but I never got the iMessage.': {
+    finding: 'Linq inbound handshake missing — recipient had not texted the org number.',
+    chips: ['Linq', 'onboard'],
   },
 }
 
@@ -1199,19 +1184,18 @@ class Engine {
     llmCalls: LIVE_ONLY ? [] : SEED.llmCalls,
     posts: LIVE_ONLY ? [] : SEED.posts,
     competitors: [
-      { id: 'langsmith', name: 'LangSmith', status: 'watching', threat: 0.62, lastScanAt: 0, capIds: ['tracing', 'evals', 'prompt-management', 'datasets', 'dashboards'] },
-      { id: 'langfuse', name: 'Langfuse', status: 'watching', threat: 0.48, lastScanAt: 0, capIds: ['tracing', 'evals', 'prompt-management', 'cost-tracking', 'dashboards', 'otel'] },
-      { id: 'helicone', name: 'Helicone', status: 'watching', threat: 0.31, lastScanAt: 0, capIds: ['tracing', 'cost-tracking', 'dashboards'] },
+      { id: 'terac', name: 'Terac', status: 'watching', threat: 0.58, lastScanAt: 0, capIds: ['human-in-loop', 'support-desk'] },
+      { id: 'cognition', name: 'Cognition', status: 'watching', threat: 0.51, lastScanAt: 0, capIds: ['github-ship', 'cockpit'] },
+      { id: 'lindy', name: 'Lindy', status: 'watching', threat: 0.36, lastScanAt: 0, capIds: ['voice-agents', 'marketing-studio', 'support-desk'] },
     ],
     capabilities: [
-      { id: 'tracing', label: 'agent tracing', ours: false },
-      { id: 'otel', label: 'OpenTelemetry', ours: false },
-      { id: 'evals', label: 'evals', ours: false },
-      { id: 'prompt-management', label: 'prompt management', ours: false },
-      { id: 'cost-tracking', label: 'cost tracking', ours: false },
-      { id: 'dashboards', label: 'dashboards', ours: false },
-      { id: 'datasets', label: 'datasets', ours: false },
-      { id: 'session-replay', label: 'session replay', ours: false },
+      { id: 'cockpit', label: 'ops cockpit', ours: false },
+      { id: 'github-ship', label: 'GitHub ship loop', ours: false },
+      { id: 'human-in-loop', label: 'human-in-the-loop', ours: false },
+      { id: 'support-desk', label: 'support desk', ours: false },
+      { id: 'treasury', label: 'treasury', ours: false },
+      { id: 'marketing-studio', label: 'marketing studio', ours: false },
+      { id: 'voice-agents', label: 'voice agents', ours: false },
     ],
     intel: LIVE_ONLY
       ? []
@@ -1685,7 +1669,7 @@ class Engine {
       this.log('alerts', 'Changelog Scout', 'Perplexity off — competitive research paused', ['no key'])
       return
     }
-    this.log('alerts', 'Changelog Scout', 'Perplexity research online — sweeping rivals in AI agent observability', ['sonar', 'live'])
+    this.log('alerts', 'Changelog Scout', 'Perplexity research online — sweeping rivals', ['sonar', 'live'])
     await this.sleep(20000)
     for (const rival of this.state.competitors) {
       try {
@@ -1701,8 +1685,8 @@ class Engine {
     rival.status = 'scanning'
     this.emit()
     const r = await runResearch(
-      `What has ${rival.name} shipped or announced recently for AI agent / LLM observability (tracing, evals, prompt management, cost tracking, OpenTelemetry)? Newest features and pricing changes only. 3 bullet points max.`,
-      `You research competitors of AgentBasis, an AI agent observability platform. Be concrete, recent, and cite sources.`,
+      `What has ${rival.name} shipped or announced recently against our product? Newest features and pricing changes only. 3 bullet points max.`,
+      `You research competitors of ${COMPANY_NAME}, a zero-human company that runs itself from a cockpit (repo ${PRODUCT_REPO}). Be concrete, recent, and cite sources.`,
     )
     rival.lastScanAt = Date.now()
     if (!r || !r.live || r.error || !r.text.trim()) {
@@ -1734,7 +1718,7 @@ class Engine {
     const counter = await this.agentBrain(
       'Gap Analyst',
       'anthropic',
-      'You are the Gap Analyst at AgentBasis, an AI agent observability platform (python SDK). Given rival research, reply with ONE short sentence: the most important counter-move for AgentBasis. No preamble.',
+      'You are the Gap Analyst at Bob the Busines. Given rival research, reply with ONE short sentence: the most important counter-move for our cockpit product. No preamble.',
       `Rival: ${rival.name}. Research findings: ${r.text.slice(0, 900)}`,
       80,
     )
@@ -1876,7 +1860,7 @@ class Engine {
     const text = await this.agentBrain(
       'CFO Agent',
       'anthropic',
-      `You are the CFO Agent of Business_Agent, an autonomous software company. Divide the ENTIRE operating account at ${bank.name} (balance $${bank.balance.toLocaleString()}) across sensible business categories. Reply with ONLY compact JSON, no markdown: {"alloc": [{"label": "<category>", "pct": <integer>}...], "rationale": "<ONE short sentence>"} — 5 to 7 categories, short labels, integer percents summing to exactly 100, covering at least payroll/ops, taxes, marketing, investment, and a cash buffer.`,
+      `You are the CFO Agent of ${COMPANY_NAME}, an autonomous software company. Divide the ENTIRE operating account at ${bank.name} (balance $${bank.balance.toLocaleString()}) across sensible business categories. Reply with ONLY compact JSON, no markdown: {"alloc": [{"label": "<category>", "pct": <integer>}...], "rationale": "<ONE short sentence>"} — 5 to 7 categories, short labels, integer percents summing to exactly 100, covering at least payroll/ops, taxes, marketing, investment, and a cash buffer.`,
       `Company facts: revenue today $${((rev?.grossCents ?? 0) / 100).toFixed(2)} (Stripe ${rev?.mode ?? 'off'}), LLM spend today $${this.state.spendToday.toFixed(2)}, team is entirely AI agents (no salaries yet, but keep a payroll/ops line for contractors and Terac hires). Divide the account as JSON only.`,
       350,
       'smart',
@@ -2027,7 +2011,7 @@ class Engine {
       const text = await this.agentBrain(
         'CFO Agent',
         'anthropic',
-        `You are the CFO Agent of Business_Agent, an autonomous company. You manage the operating account at ${bank.name} (balance $${bank.balance.toLocaleString()}). Reply with ONLY JSON: {"from": "<category>", "to": "<category>", "pts": 1|2, "reason": "<one sentence>"} — move 1-2 percentage points between two existing categories, or {"from": null} to hold.`,
+        `You are the CFO Agent of ${COMPANY_NAME}, an autonomous company. You manage the operating account at ${bank.name} (balance $${bank.balance.toLocaleString()}). Reply with ONLY JSON: {"from": "<category>", "to": "<category>", "pts": 1|2, "reason": "<one sentence>"} — move 1-2 percentage points between two existing categories, or {"from": null} to hold.`,
         `Current allocation: ${labels}.\nRevenue today (Stripe ${rev?.mode ?? 'off'}): $${((rev?.grossCents ?? 0) / 100).toFixed(2)} across ${rev?.count ?? 0} payments.\nLLM spend today: $${this.state.spendToday.toFixed(2)}.\nDecide one small rebalance (or hold) as JSON only.`,
         140,
       )
@@ -2269,7 +2253,7 @@ class Engine {
   }
 
   setGithubRepo = (_repo: string) => {
-    // Product is pinned to AgentBasis/agentbasis-python-sdk.
+    // Product ships to GITHUB_REPO from .env.
   }
 
   applyGithubScan = (scan: GithubScan) => {
@@ -2436,7 +2420,7 @@ class Engine {
       this.log('alerts', 'Changelog Scout', `${c.name}: ${entry.text}`, ['matrix gap'])
       await S(1200)
       this.llm('Gap Analyst', 'Anthropic', 'claude-haiku-4-5', 0.008)
-      entry.counter = 'product ship loop is revising the python SDK on GitHub'
+      entry.counter = 'product ship loop is revising the repo on GitHub'
       this.log('ceo', 'Orchestrator', `Counter to ${c.name}: ${entry.counter}`, [cap.label])
       c.status = 'watching'
       this.emit()
@@ -2499,12 +2483,12 @@ class Engine {
       id: this.nextId++,
       at: Date.now(),
       comp: item.rival,
-      text: `research: ${item.name} — the python SDK is missing it`,
+      text: `research: ${item.name} — our product is missing it`,
       counter: 'forwarded to product — Repo Agent shipping to GitHub',
     }
     this.state.intel.push(intel)
     if (this.state.intel.length > 12) this.state.intel.shift()
-    this.log('alerts', 'Changelog Scout', `${item.rival}: ${intel.text}`, ['sdk gap'])
+    this.log('alerts', 'Changelog Scout', `${item.rival}: ${intel.text}`, ['product gap'])
     return this.pushShipJob({
       capId: item.id,
       feature: item.name,
@@ -3449,7 +3433,7 @@ class Engine {
         real = await this.agentBrain(
           d.agent,
           WRITER_PROVIDER[d.agent] ?? 'anthropic',
-          `You are "${d.agent}", a copywriter agent at Business_Agent with a ${d.voice} voice. Write ONE post for the @business_agent X account announcing a just-committed feature of the AgentBasis python SDK (LLM observability). Under 240 characters. No hashtags, no emoji, no quotes around the post. Reply with the post text only.`,
+          `You are "${d.agent}", a copywriter agent at ${COMPANY_NAME} with a ${d.voice} voice. Write ONE post announcing a just-committed feature of the ${PRODUCT_REPO} cockpit. Under 240 characters. No hashtags, no emoji, no quotes around the post. Reply with the post text only.`,
           `Feature just committed: ${feature}`,
           120,
         )
