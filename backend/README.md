@@ -1,6 +1,6 @@
 # Backend
 
-API for ZeroCo. Owns secrets and live vendor calls. Cockpit talks to this
+API for Bob the Busines. Owns secrets and live vendor calls. Cockpit talks to this
 process over `/api` — it never talks to Terac (or holds `TERAC_API_KEY`) itself.
 
 ```bash
@@ -34,5 +34,5 @@ Listens on `http://127.0.0.1:8787`. Keys come from the workspace `../.env`.
 follower endpoint is often locked on cheaper X API tiers; in that case the
 route falls back to people who mentioned @tryterac in the last 7 days.
 
-`GITHUB_TOKEN` is required for Product. Set `GITHUB_REPO=owner/name` to the
-repo the agents should manage.
+`GITHUB_TOKEN` is required for Product. The scan and ship loop target
+`AliUraish/Buisness_Agent` (`GITHUB_REPO`). Repo Agent opens PRs under `product/`.
