@@ -158,7 +158,7 @@ export function parseVerdict(answers: ScreeningAnswer[] | undefined | null): { v
   const revised = /revise|no —|too expensive|maybe/i.test(verdictAns)
   return {
     verdict: revised ? 'revised' : 'approved',
-    reason: notes || (revised ? 'Expert would not subscribe as offered.' : 'Expert would subscribe as offered.'),
+    reason: notes || (revised ? 'Expert asked for a revision.' : 'Expert approved the post.'),
   }
 }
 
@@ -166,12 +166,12 @@ async function ensureProject(): Promise<string> {
   if (projectIdCache) return projectIdCache
   const listed = await call('/projects?limit=100')
   const rows: { id: string; name: string }[] = listed?.data ?? listed ?? []
-  const existing = Array.isArray(rows) ? rows.find((p) => /business_agent/i.test(p.name ?? '')) : undefined
+  const existing = Array.isArray(rows) ? rows.find((p) => /business_agent|bob the busines/i.test(p.name ?? '')) : undefined
   if (existing?.id) {
     projectIdCache = existing.id
     return existing.id
   }
-  const created = await call('/projects', { method: 'POST', body: JSON.stringify({ name: 'Business_Agent' }) })
+  const created = await call('/projects', { method: 'POST', body: JSON.stringify({ name: 'Bob the Busines' }) })
   if (!created?.id) throw new Error('Terac did not return a project id')
   projectIdCache = created.id
   return created.id
@@ -216,40 +216,27 @@ export function cheapActivity(title: string, description: string, url: string) {
 export function opportunityBody(projectId: string, input: HireInput) {
   const page = reviewPageUrl({ mode: 'claim', feature: input.feature, post: input.post })
   return {
-    title: `Review AgentBasis — would you subscribe?`,
+    title: `Review this post — ${input.feature}`,
     internal_title: `business-agent-${input.feature.replace(/\s+/g, '-').toLowerCase()}`,
     description:
-      `You are the ONE human reviewing AgentBasis (the OS for AI agents). ~5 minutes.\n\n` +
-      `1. Open the task page and read the product brief.\n` +
-      `2. Open https://agentbasis.co and look at the real product.\n` +
-      `3. Come back and answer the three questions.\n\n` +
-      `They sell it as a $9/month Stripe subscription. Feature in this offer: ${input.feature}.\n` +
-      `Task page:\n${page}`,
+      `You are the ONE human reviewing an agent-written post. ~5 minutes.\n\n` +
+      `Feature: ${input.feature}\n\n${input.post}\n\n` +
+      `Open the task page, then Approve or Revise.\n${page}`,
     project_id: projectId,
     ...CHEAP_HIRE,
     screening_questions: [
       {
-        key: 'opened',
-        text: 'Did you open agentbasis.co and look at the product?',
-        pick: 'one',
-        answers: [
-          { text: 'Yes — I opened it', qualify_logic: 'may' },
-          { text: 'No — I could not open it', qualify_logic: 'may' },
-        ],
-      },
-      {
         key: 'verdict',
-        text: 'After seeing AgentBasis, would you subscribe at $9/month?',
+        text: `Should we post this as written? (${input.feature})`,
         pick: 'one',
         answers: [
-          { text: 'Yes — I would pay', qualify_logic: 'may', allow_free_text: true },
-          { text: 'No — too expensive or unclear', qualify_logic: 'may', allow_free_text: true },
-          { text: 'Maybe — if they changed one thing', qualify_logic: 'may', allow_free_text: true },
+          { text: 'Approve — post as written', qualify_logic: 'may', allow_free_text: true },
+          { text: 'Revise — claims are too strong', qualify_logic: 'may', allow_free_text: true },
         ],
       },
       {
         key: 'notes',
-        text: 'One sentence: why, and what to change if not yes.',
+        text: 'One sentence: why.',
         pick: 'one',
         allow_paste: true,
         answers: [
@@ -260,8 +247,8 @@ export function opportunityBody(projectId: string, input: HireInput) {
     ],
     tasks: [
       cheapActivity(
-        'Read AgentBasis, then answer',
-        `Open the briefing, visit https://agentbasis.co, then answer the three questions.\n\n${page}`,
+        'Read the post, then answer',
+        `Open the briefing, read the post, then Approve or Revise.\n\n${page}`,
         page,
       ),
     ],
@@ -382,7 +369,7 @@ export function tradeOpportunityBody(projectId: string, input: TradeInput) {
   const roiStr = `${input.roi >= 0 ? '+' : ''}${input.roi.toFixed(1)}%`
   const page = reviewPageUrl({ mode: 'trade', feature: `${input.symbol} $${input.amount}`, post: `Deploy $${input.amount} into ${input.symbol}. Desk 30d ROI ${roiStr}. ${input.ranking}` })
   return {
-    title: `ZeroCo trade review — ${input.symbol}`,
+    title: `Bob the Busines trade review — ${input.symbol}`,
     internal_title: `business-agent-trade-${input.symbol.toLowerCase()}-${Date.now()}`,
     description:
       `ONE human, ~5 minutes. An agent-run company just took Stripe subscription cash and wants to deploy $${input.amount} into ${input.symbol} (${input.name}).\n\n` +
@@ -427,7 +414,7 @@ export function tradeOpportunityBody(projectId: string, input: TradeInput) {
     tasks: [
       cheapActivity(
         'Open the deploy brief',
-        `Look at the subscribe company deploying $${input.amount} into ${input.symbol}, then answer confidence.`,
+        `Look at the desk deploying $${input.amount} into ${input.symbol}, then answer confidence.`,
         page,
       ),
     ],
@@ -654,10 +641,10 @@ export function allocationOpportunityBody(projectId: string, input: AllocationIn
     post: `${input.bankName}: $${input.balance.toLocaleString()}\n${rows}\n${input.rationale}`,
   })
   return {
-    title: `ZeroCo treasury review — $${input.balance.toLocaleString()}`,
+    title: `Bob the Busines treasury review — $${input.balance.toLocaleString()}`,
     internal_title: `business-agent-alloc-${Date.now()}`,
     description:
-      `ONE human, ~5 minutes. ZeroCo's CFO Agent divided the operating account.\n\n` +
+      `ONE human, ~5 minutes. Bob the Busines CFO Agent divided the operating account.\n\n` +
       `== ACCOUNT ==\n${input.bankName}: $${input.balance.toLocaleString()}\n\n` +
       `== PROPOSED DIVISION ==\n${rows}\n\n` +
       `== CFO REASONING ==\n${input.rationale}\n\n` +
@@ -745,7 +732,7 @@ export async function pollAllocationReview(jobId: string): Promise<Pick<TeracAll
 }
 
 export function shipOpportunityBody(projectId: string, input: ShipInput) {
-  const repo = GITHUB_REPO || 'AgentBasis/agentbasis-python-sdk'
+  const repo = GITHUB_REPO || ''
   const prUrl = input.prNumber ? `https://github.com/${repo}/pull/${input.prNumber}` : `https://github.com/${repo}`
   const page = reviewPageUrl({
     mode: 'ship',
