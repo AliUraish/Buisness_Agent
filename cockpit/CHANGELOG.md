@@ -2,6 +2,195 @@
 
 All notable changes to Cockpit are documented here.
 
+## [0.21.0.0] - 2026-08-15
+
+### Changed
+- Terac `/review` is a ship form: feature / PR, **Should we ship this?**,
+  then **is the code ready?** plus Open PR + Open repo
+  (`AgentBasis/agentbasis-python-sdk`). Screeners match that form.
+
+## [0.20.0.0] - 2026-08-15
+
+### Added
+- Subscriber site at `/subscribe` (also backend `/`): AgentBasis product,
+  link to agentbasis.co, Stripe checkout CTA from `STRIPE_PAYMENT_LINK`
+- Terac human page at `/review`: product brief, **Open agentbasis.co**,
+  then three questions (opened it? would you pay $9? why)
+
+## [0.19.0.0] - 2026-08-15
+
+### Added
+- Perflo (perflo.ai — the agent bank) replaces Bob the Banker. Backend
+  `GET /api/perflo/summary` reads real balance + activity from
+  api-gateway.perflo.ai (Bearer PERFLO_TOKEN, read-only). Live: the bank
+  panel shows the real balance with a PERFLO LIVE chip and the spend limit
+  becomes the real available balance; without a token it says
+  PERFLO OFF · SIM honestly
+- Funding pools with overflow: every real cost (LLM calls, hires) draws
+  from Perflo first; when the limit fills, the source flips to Stripe with
+  a feed event ("Perflo spend limit reached — costs now drawing from
+  Stripe") and the meter shows both pools
+- The CFO division + Terac review now operate on the Perflo account;
+  restored Neon snapshots migrate to the new bank shape
+
+### Removed
+- Whop from the Finance page — Stripe is the only revenue rail shown
+
+## [0.19.0.0] - 2026-08-15
+
+### Changed
+- Terac hires are REST-only (no MCP): 1 person, b2c general population,
+  5-minute **activity** (not an AI interview). Task URL is the subscribe
+  review page (`GET /review`, or `REVIEW_URL` if public). Screeners no
+  longer reject non-experts — cheaper pool, faster fill.
+
+### Added
+- Participant page at `/review` — the exact UI the Terac person opens.
+
+## [0.18.0.0] - 2026-08-15
+
+### Added
+- The money division is a real decision: at boot the CFO Agent
+  (claude-sonnet-5) divides the ENTIRE Bob the Banker balance across
+  sensible categories with reasoning (JSON-validated, forced to sum 100,
+  applied once per company-lifetime via a persisted `divided` flag), then
+  a Terac human reviews the division using the session's single hire —
+  backend `POST /api/terac/allocations` with a full review doc (account,
+  proposed split with dollars, CFO reasoning, Approve/Adjust checks)
+- Bank panel review strip: CFO dividing… → human reviewing → HUMAN ✓
+  approved / ⚑ adjust / skipped-with-reason. Free failures (Terac 401/412)
+  refund the hire slot
+
+### Changed
+- Finance page restored to its original layout in live-only mode: forecast
+  chart with fan, five-model ensemble, aggregation receipt, and report are
+  back — anchored at the model MRR so a $0 real-revenue day can't produce
+  $0/NaN forecasts. Revenue-today hero stays real above it
+
+## [0.18.0.0] - 2026-08-15
+
+### Added
+- Linq onboard: Support texts the Stripe subscribe link to the test phone
+  (`POST /api/linq/onboard`). Arm with `STRIPE_PAYMENT_LINK=https://buy.stripe.com/…`
+  (or a Checkout URL). One real send per session — this onboard is that send.
+  Support mode: SUBSCRIBE LINK chip + "Text subscribe link". Failed sends stay
+  honest in the thread. Website sells the sub; cockpit only delivers the link
+  and reads the money on Stripe.
+
+## [0.17.0.0] - 2026-08-15
+
+### Changed
+- Terac efficiency: ONE human hire per session across ALL gates (audience
+  post gate, trade confidence gate) via a shared budget counter — attempts
+  count too, so a failed hire can never trigger a second paid call. When
+  the budget is spent, every gate falls back honestly and says so
+- Cheapest legal study: task duration 15 → 7 minutes on all three
+  opportunity kinds (Terac refuses budgets under $5)
+- The ship-review opportunity is now a full reviewer interface: one doc
+  with sections — RESEARCH (intel findings + rival), FEATURE IDEA,
+  IMPLEMENTATION with the public PR link (github.com/…/pull/N) — plus
+  per-item screening checks (research sound? feature worth shipping?
+  PR implements it?) before the final Approve/Reject verdict
+
+## [0.16.1.0] - 2026-08-15
+
+### Fixed
+- Linq integration rebuilt for Partner API v3 (the token's actual API):
+  Bearer auth, `/api/partner/v3/chats`, from/to/message.parts body. The
+  org's sending number is auto-discovered from `/v3/phone_numbers` and
+  cached, so LINQ_SEND_FROM can be anything; phone inputs normalize to
+  E.164 (unit-tested). Error extraction now surfaces Linq's real codes
+- Verified end-to-end: sandbox requires the recipient to text the org
+  number first (error 2008); after the handshake, a real SMS delivered
+  (chat + message ids returned)
+
+## [0.16.0.0] - 2026-08-15
+
+### Added
+- Neon Postgres is the company's persistent memory. Backend owns NEON_URL
+  (`/api/db/*`): an append-only `events` journal and a `state` key/value
+  snapshot store, schema auto-created on first touch
+- Engine hydrates from Neon before any loop starts: feed history, LLM
+  ledger + spend, positions, executed market rounds, bank, tickets, posts,
+  bug checks, capabilities, and counters all survive page reloads. Every
+  feed event journals fire-and-forget; domain snapshots persist every 30s
+- In-flight records are restored honestly (mid-pipeline tickets reset to
+  open, unfinished bug checks close as not-reproduced with a note); id
+  sequences skip past restored records. No NEON_URL → in-memory as before
+- Verified live: a reload restored the prior session's journal, 12-row
+  LLM ledger, and both real Alpaca positions
+
+## [0.15.1.0] - 2026-08-15
+
+### Added
+- Alpaca paper orders armed and verified: the desk's first real order
+  (ETH/USD $600 notional market buy) filled on the paper account and
+  matches Alpaca's own records — order id, fill price, and quantity.
+  Natural spend cap: deploys stop when the Growth allocation runs out
+
+## [0.15.0.0] - 2026-08-15
+
+### Added
+- The agents are real LLMs. Backend LLM proxy (`POST /api/llm/complete`,
+  `GET /api/llm/status`) calls Anthropic (claude-haiku-4-5 / sonnet-5),
+  OpenAI (gpt-5-mini, minimal reasoning effort), and Gemini (2.5-flash,
+  thinking budget 0) with keys server-side. Spend rails: 350 output tokens
+  per call, 250 calls per session, estimated cost tracked per call
+- Real reasoning wired in: the five desk personas predict 30d ROI from
+  live Alpaca data (persona → provider split, JSON-validated, scripted
+  fallback per agent); the CFO rebalances Bob the Banker with a real
+  decision over real numbers (may choose to hold); the five writers draft
+  real posts across three providers; the nine jurors vote for real as
+  follower personas. All under LIVE_ONLY — real calls, real cadences
+  (desk + CFO every 5 minutes)
+- The Mode 5 LLM ledger is now genuine: actual provider, model, token
+  counts, and estimated cost per call — verified rows from gpt-5-mini,
+  gemini-2.5-flash, and claude-haiku-4-5
+- Env conveniences: LINQ_API_KEY accepted as the Linq token alias; the
+  Vite Alpaca proxy also reads backend/.env
+
+### Fixed
+- gpt-5-family and Gemini 2.5 burned tiny token budgets on reasoning and
+  returned empty text — now minimal reasoning / zero thinking budget
+
+## [0.14.0.0] - 2026-08-15
+
+### Changed
+- LIVE-ONLY mode (`LIVE_ONLY = true` in `src/sim/engine.ts`): all mock data
+  and fabricating loops are off until the LLM API keys land. What still
+  runs is exactly what's real — Stripe revenue polling, GitHub scan + SDK
+  ship loop, Alpaca price feed, Terac, Linq status, X audience — plus the
+  audience follower swarm (kept per request) and Bob the Banker (explicit
+  feature, labeled SIM BANK, CFO rebalance loop paused)
+- Gone until keys land: seeded transactions / LLM rows / posts / tickets /
+  bug checks / market rounds / positions / intel moves / committee history /
+  sim feature board; ambient payments; ops, competition-intel, investment-
+  desk, support-inbound, and CFO loops; fake forecaster runs; the
+  fabricated 30-day revenue chart; sim LLM billing (`llm()` is a no-op)
+- Top-bar MRR now tracks real Stripe revenue today (boots $0); LLM spend
+  boots $0.00; loop counter 0; capability matrix "ours" cells start empty
+  and flip only when the real GitHub ship loop lands a feature
+- Honest empty states: Investment desk "paused — awaiting LLM API keys",
+  empty positions/inbox/ledgers; sim seed generators remain exported and
+  unit-tested for when the full simulation is re-enabled (flip the flag)
+
+## [0.13.0.0] - 2026-08-15
+
+### Added
+- Ongoing product ship loop on **AgentBasis/agentbasis-python-sdk**: Changelog
+  Scout / Gap Analyst / Brief Writer research a gap, then Repo Agent opens a
+  branch, writes a python module under `agentbasis/`, squash-merges the PR,
+  and queues the feature for marketing. First ship ~10s after boot, then
+  every ~3 minutes, cap 6 per session. No Terac
+- Backend `POST /api/github/ship` creates the branch + file + PR + merge
+  with the GitHub token. Failed writes stay failed — no fake merge
+- Product banner and Competition pipeline show live GitHub shipping instead
+  of "observing / not shipping"
+
+### Changed
+- Competition intel still reports rival gaps but no longer opens fake
+  `src/auth/sso.ts` PRs. SDK files only
+
 ## [0.12.1.0] - 2026-08-15
 
 ### Changed
