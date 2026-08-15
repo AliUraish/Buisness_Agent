@@ -91,9 +91,9 @@ describe('commitsPerDay', () => {
 })
 
 describe('pickDefaultRepo', () => {
-  it('uses the requested repo when GITHUB_REPO is unset', () => {
+  it('is pinned to AliUraish/Buisness_Agent', () => {
     expect(pickDefaultRepo('AliUraish', [{ fullName: 'AliUraish/Agentalize', pushedAt: 8, private: false }], 'AliUraish/PocketX')).toBe(
-      'AliUraish/PocketX',
+      'AliUraish/Buisness_Agent',
     )
   })
 })
@@ -102,6 +102,7 @@ describe('isSdkShipFile', () => {
   it('only allows files under product/', () => {
     expect(isSdkShipFile('product/llms/openai/tool_spans.py')).toBe(true)
     expect(isSdkShipFile('/product/context_redaction.py')).toBe(true)
+    expect(isSdkShipFile('product/terac-ship-form.md')).toBe(true)
     expect(isSdkShipFile('src/auth/sso.ts')).toBe(false)
     expect(isSdkShipFile('product/../secrets.py')).toBe(false)
     expect(isSdkShipFile('agentbasis/readme.md')).toBe(false)
