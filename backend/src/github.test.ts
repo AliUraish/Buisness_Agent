@@ -64,10 +64,10 @@ describe('extractFeatures', () => {
     expect(features).toHaveLength(0)
   })
 
-  it('reads AgentBasis python-sdk style: merged PRs + Add/Enhance commits, skips tests', () => {
+  it('reads merged PRs + Add/Enhance commits, skips tests', () => {
     const features = extractFeatures(
       [
-        { sha: 'fe606e9xxxx', message: 'Merge pull request #4 from AgentBasis/anthropic_tool_improvement', at: t, pr: 4 },
+        { sha: 'fe606e9xxxx', message: 'Merge pull request #4 from acme/anthropic_tool_improvement', at: t, pr: 4 },
         { sha: '8fdaa22xxxx', message: 'Enhance OpenTelemetry tracing by adding tool count attributes', at: t - 1, pr: null },
         { sha: 'e803f5cxxxx', message: 'all tests passed', at: t - 2, pr: null },
         { sha: '12d5c05xxxx', message: 'Add unit tests for tool count and tool use names', at: t - 3, pr: null },
@@ -91,19 +91,19 @@ describe('commitsPerDay', () => {
 })
 
 describe('pickDefaultRepo', () => {
-  it('is pinned to the AgentBasis python SDK — no other repo', () => {
+  it('uses the requested repo when GITHUB_REPO is unset', () => {
     expect(pickDefaultRepo('AliUraish', [{ fullName: 'AliUraish/Agentalize', pushedAt: 8, private: false }], 'AliUraish/PocketX')).toBe(
-      'AgentBasis/agentbasis-python-sdk',
+      'AliUraish/PocketX',
     )
   })
 })
 
 describe('isSdkShipFile', () => {
-  it('only allows python modules under agentbasis/', () => {
-    expect(isSdkShipFile('agentbasis/llms/openai/tool_spans.py')).toBe(true)
-    expect(isSdkShipFile('/agentbasis/context_redaction.py')).toBe(true)
+  it('only allows files under product/', () => {
+    expect(isSdkShipFile('product/llms/openai/tool_spans.py')).toBe(true)
+    expect(isSdkShipFile('/product/context_redaction.py')).toBe(true)
     expect(isSdkShipFile('src/auth/sso.ts')).toBe(false)
-    expect(isSdkShipFile('agentbasis/../secrets.py')).toBe(false)
+    expect(isSdkShipFile('product/../secrets.py')).toBe(false)
     expect(isSdkShipFile('agentbasis/readme.md')).toBe(false)
   })
 })
