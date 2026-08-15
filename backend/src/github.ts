@@ -1,10 +1,10 @@
 // Owns the GitHub REST scan and the agent ship writes. The token stays here —
-// Cockpit never sees it. Pinned to AgentBasis/agentbasis-python-sdk.
+// Cockpit never sees it. Repo comes from GITHUB_REPO.
 
-import { GITHUB_TOKEN } from './env.ts'
+import { COMPANY_NAME, GITHUB_REPO, GITHUB_TOKEN } from './env.ts'
 
 const BASE = 'https://api.github.com'
-export const FOCUS_REPO = 'AgentBasis/agentbasis-python-sdk'
+export const FOCUS_REPO = GITHUB_REPO
 const SKIP_TYPES = new Set(['chore', 'docs', 'test', 'ci', 'style', 'build', 'revert'])
 const SKIP_SCOPES = new Set(['tests', 'test', 'docs', 'ci', 'chore'])
 const GENERIC_SCOPES = new Set(['app', 'core', 'main', 'misc', 'src', 'repo', 'api', 'env', 'hooks', 'example', 'frontend', 'backend', 'demo'])
@@ -306,13 +306,15 @@ export async function listRepos(): Promise<{ login: string | null; repos: Github
   if (!user.ok) return { login: null, repos: [], error: errMsg(user.json, `GitHub ${user.status}`) }
   return {
     login,
-    repos: [{ fullName: FOCUS_REPO, pushedAt: Date.now(), private: false }],
-    error: null,
+    repos: FOCUS_REPO ? [{ fullName: FOCUS_REPO, pushedAt: Date.now(), private: false }] : [],
+    error: FOCUS_REPO ? null : 'Set GITHUB_REPO=owner/name in .env, then restart the backend.',
   }
 }
 
-export function pickDefaultRepo(_login: string | null, _repos: GithubRepoInfo[], _requested?: string | null): string | null {
-  return FOCUS_REPO
+export function pickDefaultRepo(_login: string | null, repos: GithubRepoInfo[], requested?: string | null): string | null {
+  if (FOCUS_REPO) return FOCUS_REPO
+  if (requested) return requested
+  return repos[0]?.fullName ?? null
 }
 
 function asCommit(c: any): GithubCommit | null {
@@ -349,6 +351,9 @@ const TTL = 20_000
 
 export async function scanRepo(_requested?: string | null): Promise<GithubScan> {
   const repo = FOCUS_REPO
+  if (!repo) {
+    return offScan('Set GITHUB_REPO=owner/name in .env, then restart the backend.')
+  }
   if (cache && cache.key === repo && Date.now() - cache.at < TTL) return cache.payload
 
   if (!isGithubLive()) {
@@ -413,7 +418,7 @@ export interface GithubShipResult {
 
 export function isSdkShipFile(file: string): boolean {
   const f = file.replace(/^\/+/, '')
-  return f.startsWith('agentbasis/') && !f.includes('..') && f.endsWith('.py')
+  return f.startsWith('product/') && !f.includes('..') && (f.endsWith('.py') || f.endsWith('.ts') || f.endsWith('.md'))
 }
 
 export function featureModule(input: { slug: string; name: string; summary: string; brief: string }): string {
@@ -424,7 +429,7 @@ ${input.summary}
 
 ${input.brief}
 
-Shipped by Business_Agent Repo Agent after Changelog Scout / Gap Analyst / Brief Writer research.
+Shipped by ${COMPANY_NAME} Repo Agent after Changelog Scout / Gap Analyst / Brief Writer research.
 """
 from __future__ import annotations
 
@@ -441,12 +446,43 @@ def apply(span: Optional[Any] = None, **attrs: Any) -> None:
     set_attr = getattr(span, "set_attribute", None)
     if not callable(set_attr):
         return
-    set_attr("agentbasis.feature", FEATURE)
+    set_attr("product.feature", FEATURE)
     for key, value in attrs.items():
         if value is None:
             continue
-        set_attr(f"agentbasis.{key}", value)
+        set_attr(f"product.{key}", value)
 `
+}
+
+export function featureNote(input: { slug: string; name: string; summary: string; brief: string }): string {
+  return `# ${input.name}
+
+${input.summary}
+
+${input.brief}
+
+Opened by **${COMPANY_NAME}** Repo Agent on \`${FOCUS_REPO}\` after Changelog Scout / Gap Analyst / Brief Writer research.
+`
+}
+
+export function featureTs(input: { slug: string; name: string; summary: string; brief: string }): string {
+  const slug = input.slug.replace(/[^a-z0-9_-]/gi, '_')
+  return `/** ${input.name}
+ * ${input.summary}
+ *
+ * ${input.brief}
+ *
+ * Opened by ${COMPANY_NAME} Repo Agent.
+ */
+export const FEATURE = ${JSON.stringify(slug)}
+export const SUMMARY = ${JSON.stringify(input.summary)}
+`
+}
+
+export function featureFile(input: { slug: string; name: string; summary: string; brief: string }, file: string): string {
+  if (file.endsWith('.md')) return featureNote(input)
+  if (file.endsWith('.ts') || file.endsWith('.tsx')) return featureTs(input)
+  return featureModule(input)
 }
 
 function emptyShip(file: string, error: string): GithubShipResult {
@@ -467,6 +503,9 @@ export async function shipFeature(input: GithubShipInput): Promise<GithubShipRes
   if (!isGithubLive()) {
     return emptyShip(input.file, 'Set GITHUB_TOKEN in the workspace .env, then restart the backend.')
   }
+  if (!FOCUS_REPO) {
+    return emptyShip(input.file, 'Set GITHUB_REPO=owner/name in .env, then restart the backend.')
+  }
 
   const repo = FOCUS_REPO
   const meta = await ghget(`/repos/${repo}`)
@@ -477,7 +516,7 @@ export async function shipFeature(input: GithubShipInput): Promise<GithubShipRes
   const sha = String(ref.json?.object?.sha ?? '')
   if (!sha) return emptyShip(input.file, `No SHA for ${base}`)
 
-  const stem = `business_agent/${input.slug}`.replace(/[^a-z0-9/_-]+/gi, '-').replace(/\/{2,}/g, '/').slice(0, 48)
+  const stem = `bob/${input.slug}`.replace(/[^a-z0-9/_-]+/gi, '-').replace(/\/{2,}/g, '/').slice(0, 48)
   let branch = stem
   let created = await ghreq(`/repos/${repo}/git/refs`, {
     method: 'POST',
@@ -496,16 +535,16 @@ export async function shipFeature(input: GithubShipInput): Promise<GithubShipRes
 
   let file = input.file.replace(/^\/+/, '')
   if (!isSdkShipFile(file)) {
-    return emptyShip(file, 'Ship files must be python modules under agentbasis/')
+    return emptyShip(file, 'Ship files must live under product/')
   }
   const putBody = {
     message: `feat: ${input.name}\n\n${input.summary}\n\n${input.brief}`,
-    content: Buffer.from(featureModule(input), 'utf8').toString('base64'),
+    content: Buffer.from(featureFile(input, file), 'utf8').toString('base64'),
     branch,
   }
   let put = await ghreq(`/repos/${repo}/contents/${file}`, { method: 'PUT', body: putBody, timeoutMs: 45000 })
   if (!put.ok && (put.status === 422 || put.status === 409)) {
-    const tagged = file.replace(/\.py$/, `_${Date.now().toString(36).slice(-4)}.py`)
+    const tagged = file.replace(/(\.[a-z]+)$/i, `_${Date.now().toString(36).slice(-4)}$1`)
     put = await ghreq(`/repos/${repo}/contents/${tagged}`, { method: 'PUT', body: putBody, timeoutMs: 45000 })
     if (put.ok) file = tagged
   }
@@ -520,7 +559,7 @@ export async function shipFeature(input: GithubShipInput): Promise<GithubShipRes
       base,
       body:
         `## Research\n${input.brief}\n\n## Summary\n${input.summary}\n\n` +
-        `Opened and merged by Business_Agent Repo Agent on ${repo}.`,
+        `Opened by ${COMPANY_NAME} Repo Agent on ${repo}. Leave open for review, then merge.`,
     },
     timeoutMs: 45000,
   })
@@ -528,22 +567,34 @@ export async function shipFeature(input: GithubShipInput): Promise<GithubShipRes
   const number = Number(pr.json?.number)
   const url = pr.json?.html_url != null ? String(pr.json.html_url) : null
   const title = String(pr.json?.title ?? `feat: ${input.name}`)
+  cache = null
+  return {
+    live: true,
+    merged: false,
+    number,
+    title,
+    branch,
+    file,
+    sha: commitSha.slice(0, 40),
+    url,
+    error: null,
+  }
+}
 
-  const merged = await ghreq(`/repos/${repo}/pulls/${number}/merge`, {
+export async function mergePullRequest(number: number): Promise<{ live: boolean; merged: boolean; sha: string; error: string | null }> {
+  if (!isGithubLive() || !FOCUS_REPO) {
+    return { live: isGithubLive(), merged: false, sha: '', error: 'Set GITHUB_TOKEN and GITHUB_REPO, then restart the backend.' }
+  }
+  const merged = await ghreq(`/repos/${FOCUS_REPO}/pulls/${number}/merge`, {
     method: 'PUT',
-    body: { merge_method: 'squash', commit_title: `feat: ${input.name} (#${number})` },
+    body: { merge_method: 'squash', commit_title: `feat: merge #${number}` },
     timeoutMs: 45000,
   })
   cache = null
   return {
     live: true,
     merged: merged.ok,
-    number,
-    title,
-    branch,
-    file,
-    sha: String(merged.json?.sha ?? commitSha).slice(0, 40),
-    url,
+    sha: String(merged.json?.sha ?? '').slice(0, 40),
     error: merged.ok ? null : errMsg(merged.json, `merge ${merged.status}`),
   }
 }

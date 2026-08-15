@@ -2572,14 +2572,29 @@ class Engine {
 
       await this.buildPullRequest(job)
       if (this.shipHalted(job)) return
-      if (job.pr?.merged) {
+      if (!job.pr) return
+      if (SHIP_TERAC_ARMED) {
+        await this.runVerifyGate(job)
+        if (job.gate.verdict !== 'approved') return
+        const merged = await mergeGithubPr(job.pr.number)
+        if (!merged.merged) {
+          job.stage = 'pr-open'
+          job.gate.reason = merged.error ?? `PR #${job.pr.number} opened — merge failed`
+          this.log('product', 'Repo Agent', job.gate.reason, [job.pr.file])
+          this.patchIntel(job, `PR #${job.pr.number} open — waiting to merge`)
+          this.emit()
+          return
+        }
+        job.pr.merged = true
+        if (merged.sha) job.pr.sha = merged.sha.slice(0, 7)
+      }
+      if (job.pr.merged) {
         await this.mergeShip(job)
-      } else if (job.pr) {
-        job.gate.reason = job.pr.live
-          ? (job.gate.reason ?? `PR #${job.pr.number} opened but not merged`)
-          : (job.gate.reason ?? 'GitHub write skipped — token off')
-        this.patchIntel(job, `PR #${job.pr.number} ready — not merged`)
-        this.log('product', 'Repo Agent', job.gate.reason, [job.pr.file])
+      } else {
+        job.stage = 'pr-open'
+        job.gate.reason = `PR #${job.pr.number} opened on ${PRODUCT_REPO} — waiting on review`
+        this.patchIntel(job, `PR #${job.pr.number} open for review`)
+        this.log('product', 'Repo Agent', job.gate.reason, [job.pr.file, job.pr.url ?? PRODUCT_REPO])
         this.emit()
       }
     } catch (e) {
@@ -2835,7 +2850,7 @@ class Engine {
           if (next) {
             const job = this.openSdkShipJob(next)
             await this.runShipPipeline(job)
-            if (job.stage === 'shipped') this.shipsThisSession++
+            if (job.pr?.number || job.stage === 'shipped') this.shipsThisSession++
           }
         }
       } catch (e) {
