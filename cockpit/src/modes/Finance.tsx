@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { engine, BOOT_MRR } from '../sim/engine'
+import { engine, BOOT_MRR, LIVE_ONLY } from '../sim/engine'
 import { useEngineTick } from '../App'
 import { buildHistory, PAST_CAMPAIGNS } from '../data/finance'
 
@@ -47,7 +47,9 @@ function ForecastChart() {
   const preds = s.forecasters.map((f) => f.p50)
   const spread = preds.length ? Math.max(...preds) - Math.min(...preds) : p50End * 0.12
   const bandEnd = Math.max(spread * 0.65, p50End * 0.055)
-  const mrrNow = s.mrr
+  // in live-only mode the top bar tracks real revenue; the chart keeps the
+  // original modelled-MRR view so history and forecast join cleanly
+  const mrrNow = LIVE_ONLY ? BOOT_MRR : s.mrr
 
   const STEPS = 30
   const p50Series: number[] = []
@@ -256,6 +258,7 @@ function Aggregation() {
 function Report() {
   const s = useEngineTick()
   const note = s.forecastNote
+  if (!note.text) return null
   return (
     <div className="report">
       <div className="report-head">
@@ -272,8 +275,8 @@ function Report() {
         </div>
       )}
       <div className="rails num">
-        {(['Stripe', 'Whop'] as const).map((rail) => {
-          const liveInfo = rail === 'Stripe' ? s.railsLive.stripe : s.railsLive.whop
+        {(['Stripe'] as const).map((rail) => {
+          const liveInfo = s.railsLive.stripe
           return (
             <span className="rail-chip" key={rail}>
               <i className="rail-mono">{rail[0]}</i>
@@ -352,6 +355,40 @@ function RevenueToday() {
   )
 }
 
+// where the company's real costs draw from: Perflo until the limit,
+// then overflow to Stripe — both pools shown honestly
+function FundingMeter() {
+  const s = useEngineTick()
+  const f = s.funding
+  const pct = f.perfloLimit > 0 ? Math.min((f.perfloSpent / f.perfloLimit) * 100, 100) : 0
+  return (
+    <div className="funding num">
+      {!s.bank.live && (
+        <div className="funding-row">
+          <span className="funding-label">Perflo not connected — costs → Stripe</span>
+          <b>${f.stripeSpent.toFixed(2)}</b>
+        </div>
+      )}
+      {s.bank.live && (
+      <div className="funding-row">
+        <span className="funding-label">costs → Perflo</span>
+        <span className="conf-track" style={{ flex: 1 }}>
+          <i style={{ width: `${pct}%`, background: pct >= 100 ? 'var(--rose)' : 'var(--ink)' }} />
+        </span>
+        <b>${f.perfloSpent.toFixed(2)}</b>
+        <span className="dim-label">of ${f.perfloLimit.toFixed(2)} limit</span>
+      </div>
+      )}
+      {(f.source === 'stripe' || f.stripeSpent > 0) && (
+        <div className="funding-row overflow">
+          <span className="funding-label" style={{ color: 'var(--rose)' }}>limit full → Stripe</span>
+          <b>${f.stripeSpent.toFixed(2)}</b>
+        </div>
+      )}
+    </div>
+  )
+}
+
 const BANK_COLORS = ['#111111', '#9b9b9b', '#2ab3a6', '#7c6ff0', '#e8a33d', '#e05c8a', '#3fa55c']
 
 // "Bob the Banker" — the operating account, allocation owned by the CFO Agent
@@ -362,12 +399,14 @@ function BankPanel() {
     <div className="panel-plain bankpanel">
       <div className="ledger-head">
         <span>
-          {bank.name} <span className="testmode">SIM BANK</span>
+          {bank.name}{' '}
+          {bank.live ? <span className="testmode live">PERFLO LIVE</span> : <span className="testmode">PERFLO OFF · SIM</span>}
         </span>
         <span className="dim-label">managed by CFO Agent</span>
       </div>
       <div className="bank-body">
-        <div className="bank-balance num">${bank.balance.toLocaleString()}</div>
+        <div className="bank-balance num">{bank.live ? `$${bank.balance.toLocaleString()}` : '—'}</div>
+        {!bank.live && <div className="dim-label" style={{ marginBottom: 8 }}>waiting for a live Perflo read — no simulated balance</div>}
         <div className="alloc-bar">
           {bank.alloc.map((a, i) => (
             <span key={a.label} className="alloc-seg" style={{ width: `${a.pct}%`, background: BANK_COLORS[i % BANK_COLORS.length] }} />
@@ -379,11 +418,35 @@ function BankPanel() {
               <i style={{ background: BANK_COLORS[i % BANK_COLORS.length] }} />
               <span className="bank-label">{a.label}</span>
               <b>{a.pct}%</b>
-              <span className="bank-amt">${Math.round((bank.balance * a.pct) / 100).toLocaleString()}</span>
+              <span className="bank-amt">{bank.live ? `$${Math.round((bank.balance * a.pct) / 100).toLocaleString()}` : '—'}</span>
             </div>
           ))}
         </div>
         {bank.note && <div className="bank-note">CFO: {bank.note}</div>}
+        <FundingMeter />
+        <div className="bank-review num">
+          {!bank.review && <span className="dim-label">—</span>}
+          {bank.review?.status === 'proposing' && <span className="dim-label">CFO Agent dividing the account…</span>}
+          {bank.review?.status === 'waiting' && (
+            <>
+              <span className="testmode live">TERAC</span> <span className="dim-label">human reviewing the division…</span>
+            </>
+          )}
+          {bank.review?.status === 'approved' && (
+            <>
+              <span className="testmode live">HUMAN ✓</span>{' '}
+              <span className="dim-label">{bank.review.expert ?? 'Terac expert'} approved — {bank.review.note}</span>
+            </>
+          )}
+          {bank.review?.status === 'adjust' && (
+            <>
+              <span className="testmode off">HUMAN ⚑</span> <span className="dim-label">{bank.review.note}</span>
+            </>
+          )}
+          {bank.review?.status === 'skipped' && (
+            <span className="dim-label">human review skipped — {bank.review.note}</span>
+          )}
+        </div>
       </div>
     </div>
   )
