@@ -250,7 +250,7 @@ function PostLedger() {
             <div className="post-top">
               <span className="post-avatar">Z</span>
               <span className="post-who">
-                Business_Agent <span className="dim">@business_agent · {ago(p.at, now)}</span>
+                Bob the Busines <span className="dim">@business_agent · {ago(p.at, now)}</span>
               </span>
               {p.actual == null ? (
                 <span className="post-verdict dim num">measuring…</span>
