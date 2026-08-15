@@ -20,7 +20,7 @@ describe('onboardText', () => {
     const t = onboardText('https://buy.stripe.com/test_abc')
     expect(t).toContain('https://buy.stripe.com/test_abc')
     expect(t).toMatch(/subscribe/i)
-    expect(t).not.toMatch(/agentbasis/i)
+    expect(t).toContain('AliUraish/Buisness_Agent')
   })
 })
 
