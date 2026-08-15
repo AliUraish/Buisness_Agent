@@ -120,7 +120,8 @@
     const codeBlock = document.getElementById('code-block')
     document.querySelectorAll('input[name="ship"]').forEach((el) => {
       el.addEventListener('change', () => {
-        codeBlock.style.display = el.value === 'yes' && el.checked ? 'block' : (document.querySelector('input[name="ship"][value="yes"]').checked ? 'block' : 'none')
+        const yes = document.querySelector('input[name="ship"][value="yes"]')?.checked
+        codeBlock.style.display = yes ? 'block' : 'none'
       })
     })
   </script>
