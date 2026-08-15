@@ -28,7 +28,7 @@ const STATUS_LABEL: Record<string, string> = {
 const STAGE_LABEL: Record<ShipStage, string> = {
   researching: 'researching',
   briefed: 'brief forwarded',
-  building: 'revising the python SDK…',
+  building: 'revising the product…',
   'pr-open': 'PR open on GitHub',
   'hiring-verify': 'hiring verifier…',
   'awaiting-verify': 'waiting on verify',
@@ -153,7 +153,7 @@ function ShipPipeline() {
       </div>
       {!job && (
         <div className="ship-idle dim">
-          Three intel agents scan rivals. Gaps forward to product. Repo Agent researches, revises agentbasis-python-sdk, and squash-merges on GitHub — ongoing, no Terac.
+          Three intel agents scan rivals of Bob the Busines. Gaps forward to product. Repo Agent opens a PR on AliUraish/Buisness_Agent — Terac humans review, then merge.
         </div>
       )}
       {job && (
@@ -224,7 +224,7 @@ function CapabilityMatrix() {
           <thead>
             <tr>
               <th>capability</th>
-              <th className="c us">Business_Agent</th>
+              <th className="c us">Bob the Busines</th>
               {s.competitors.map((c) => (
                 <th className="c" key={c.id}>
                   {c.name}
