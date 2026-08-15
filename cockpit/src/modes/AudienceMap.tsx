@@ -78,7 +78,7 @@ function ProductQueue() {
         <span className="aud-sim-kicker">Product queue</span>
         <span className="aud-sim-title">
           {s.github.live
-            ? `${waiting} committed feature${waiting === 1 ? '' : 's'} to post from agentbasis-python-sdk`
+            ? `${waiting} committed feature${waiting === 1 ? '' : 's'} to post${s.github.repo ? ` from ${s.github.repo}` : ''}`
             : 'Waiting on GitHub — Product sends features here after a scan'}
         </span>
         {s.github.repo && <span className="prod-queue-repo num">{s.github.repo}</span>}
