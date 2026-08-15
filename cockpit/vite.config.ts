@@ -51,10 +51,6 @@ export default defineConfig(({ mode }) => {
           target: 'http://127.0.0.1:8787',
           changeOrigin: true,
         },
-        '/subscribe': {
-          target: 'http://127.0.0.1:8787',
-          changeOrigin: true,
-        },
         '/alpaca/data': {
           target: 'https://data.alpaca.markets',
           changeOrigin: true,
