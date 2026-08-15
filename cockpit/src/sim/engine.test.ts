@@ -1,24 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { AUDIENCE } from '../data/audience'
-import { engine, DEPT_COLOR, AGENT_DEPT, BOOT_MRR, ENGINEERS, JURY, JURY_QUOTAS, SHIP_TERAC_ARMED } from './engine'
+import { engine, DEPT_COLOR, AGENT_DEPT, BOOT_MRR, ENGINEERS, JURY, JURY_QUOTAS, LIVE_ONLY, MAX_SDK_SHIPS, SDK_SHIPS, SHIP_TERAC_ARMED, seedBugChecks, seedLedgers, seedMarket, seedSupport } from './engine'
 import { ALPACA_SYMBOL } from './alpaca'
 
 describe('engine seed state', () => {
-  it('claimed-only features carry no PR evidence — the marketing dept physically cannot cite them', () => {
-    const claimed = engine.state.features.filter((f) => f.status === 'claimed')
-    expect(claimed.length).toBeGreaterThan(0)
-    for (const f of claimed) {
-      expect(f.chips.some((c) => c.startsWith('PR #'))).toBe(false)
-    }
-  })
-
-  it('shipped features all carry PR + file + hash receipts', () => {
-    const shipped = engine.state.features.filter((f) => f.status === 'shipped')
-    expect(shipped.length).toBeGreaterThan(0)
-    for (const f of shipped) {
-      expect(f.chips.some((c) => /^PR #\d+$/.test(c))).toBe(true)
-      expect(f.chips.length).toBeGreaterThanOrEqual(3)
-    }
+  it('live-only mode boots with no fabricated features or history', () => {
+    expect(LIVE_ONLY).toBe(true)
+    expect(engine.state.features).toEqual([])
+    expect(engine.state.feed).toEqual([])
+    expect(engine.state.mrr).toBe(0)
+    expect(engine.state.spendToday).toBe(0)
   })
 
   it('has an accent color for every department', () => {
@@ -28,9 +19,17 @@ describe('engine seed state', () => {
   })
 })
 
-describe('ledger seed state', () => {
+describe('ledger seed state (sim generator, unused in live-only)', () => {
+  const SIM = seedLedgers()
+
+  it('live-only boots with empty ledgers', () => {
+    expect(engine.state.transactions).toEqual([])
+    expect(engine.state.llmCalls).toEqual([])
+    expect(engine.state.posts).toEqual([])
+  })
+
   it('transaction running balances are consistent and end at boot MRR', () => {
-    const txs = engine.state.transactions
+    const txs = SIM.transactions
     expect(txs.length).toBeGreaterThan(0)
     for (let i = 1; i < txs.length; i++) {
       expect(txs[i].balance).toBe(txs[i - 1].balance + txs[i].amount)
@@ -38,19 +37,19 @@ describe('ledger seed state', () => {
     expect(txs[txs.length - 1].balance).toBe(BOOT_MRR)
   })
 
-  it('spendToday equals the sum of seeded LLM ledger rows', () => {
-    const sum = engine.state.llmCalls.reduce((a, c) => a + c.cost, 0)
-    expect(engine.state.spendToday).toBeCloseTo(sum, 6)
+  it('generator spendToday equals the sum of its LLM rows', () => {
+    const sum = SIM.llmCalls.reduce((a, c) => a + c.cost, 0)
+    expect(SIM.spendToday).toBeCloseTo(sum, 6)
   })
 
   it('every seeded LLM agent bills to a known department', () => {
-    for (const c of engine.state.llmCalls) {
+    for (const c of SIM.llmCalls) {
       expect(AGENT_DEPT[c.agent]).toBeDefined()
     }
   })
 
   it('seeded posts include at least one honest miss (actual < predicted)', () => {
-    const withActual = engine.state.posts.filter((p) => p.actual != null)
+    const withActual = SIM.posts.filter((p) => p.actual != null)
     expect(withActual.length).toBeGreaterThan(0)
     expect(withActual.some((p) => p.actual! < p.predicted)).toBe(true)
     expect(withActual.some((p) => p.actual! >= p.predicted)).toBe(true)
@@ -91,8 +90,8 @@ describe('competition + investment seed state', () => {
     }
   })
 
-  it('seeded history includes a rejected proposal — the committee visibly says no', () => {
-    expect(engine.state.proposals.some((p) => p.status === 'rejected')).toBe(true)
+  it('live-only boots with no fabricated committee history', () => {
+    expect(engine.state.proposals).toEqual([])
   })
 
   it('boots with an empty ship pipeline — research has not forwarded yet', () => {
@@ -105,8 +104,20 @@ describe('competition + investment seed state', () => {
     expect(AGENT_DEPT['Brief Writer']).toBe('alerts')
   })
 
-  it('does not arm Terac on the research→PR gate', () => {
+  it('does not arm Terac on the SDK ship loop — research merges on GitHub', () => {
     expect(SHIP_TERAC_ARMED).toBe(false)
+  })
+
+  it('ships unique python modules under agentbasis/, capped per session', () => {
+    expect(MAX_SDK_SHIPS).toBe(6)
+    expect(SDK_SHIPS.length).toBe(MAX_SDK_SHIPS)
+    const files = SDK_SHIPS.map((s) => s.file)
+    expect(new Set(files).size).toBe(files.length)
+    for (const s of SDK_SHIPS) {
+      expect(s.file.startsWith('agentbasis/')).toBe(true)
+      expect(s.file.endsWith('.py')).toBe(true)
+      expect(s.file).not.toMatch(/^src\//)
+    }
   })
 
   it('at least one rival has a capability we do not — research has a gap to forward', () => {
@@ -146,8 +157,8 @@ describe('market desk seed state', () => {
     }
   })
 
-  it('seeded round is executed on the highest-consensus asset with all five predictions in', () => {
-    const round = engine.state.marketRounds[0]
+  it('sim generator round is executed on the highest-consensus asset with all five predictions in', () => {
+    const round = seedMarket().round
     expect(round.status).toBe('executed')
     expect(round.preds.length).toBe(5)
     expect(round.preds.every((p) => p.roi != null && Object.keys(p.roi).length === 5)).toBe(true)
@@ -162,8 +173,8 @@ describe('market desk seed state', () => {
     }
   })
 
-  it('seeded round carries an honest trade-confidence gate', () => {
-    const gate = engine.state.marketRounds[0].terac
+  it('sim generator round carries an honest trade-confidence gate', () => {
+    const gate = seedMarket().round.terac
     expect(gate.status).toBe('desk') // seeded history hired no expert — says so
     expect(gate.confidence).toBeGreaterThanOrEqual(0)
     expect(gate.confidence).toBeLessThanOrEqual(100)
@@ -171,9 +182,16 @@ describe('market desk seed state', () => {
   })
 })
 
-describe('support seed state', () => {
+describe('support seed state (sim generator, unused in live-only)', () => {
+  const TICKETS = seedSupport()
+
+  it('live-only boots with an empty inbox', () => {
+    expect(engine.state.tickets).toEqual([])
+    expect(engine.state.paymentLink).toBeNull()
+  })
+
   it('resolved tickets carry a CSAT score and a first-response time', () => {
-    const resolved = engine.state.tickets.filter((t) => t.status === 'resolved')
+    const resolved = TICKETS.filter((t) => t.status === 'resolved')
     expect(resolved.length).toBeGreaterThan(0)
     for (const t of resolved) {
       expect(t.csat).toBeGreaterThanOrEqual(1)
@@ -183,26 +201,26 @@ describe('support seed state', () => {
   })
 
   it('seeded ratings include an honest middling CSAT, not all fives', () => {
-    const rated = engine.state.tickets.filter((t) => t.csat != null)
+    const rated = TICKETS.filter((t) => t.csat != null)
     expect(rated.some((t) => t.csat! < 4)).toBe(true)
     expect(rated.some((t) => t.csat! === 5)).toBe(true)
   })
 
   it('churn risk is escalated to the human queue with no auto-reply', () => {
-    const esc = engine.state.tickets.find((t) => t.status === 'escalated')
+    const esc = TICKETS.find((t) => t.status === 'escalated')
     expect(esc).toBeDefined()
     expect(esc!.topic).toBe('churn-risk')
     expect(esc!.msgs.every((m) => m.from === 'customer')).toBe(true)
   })
 
   it('phone numbers are masked — no raw digits beyond the tail', () => {
-    for (const t of engine.state.tickets) {
+    for (const t of TICKETS) {
       expect(t.phone).toMatch(/^\+1 ·· ?· ·· \d{3}$/)
     }
   })
 
   it('every conversation starts with the customer, ordered by time', () => {
-    for (const t of engine.state.tickets) {
+    for (const t of TICKETS) {
       expect(t.msgs[0].from).toBe('customer')
       for (let i = 1; i < t.msgs.length; i++) {
         expect(t.msgs[i].at).toBeGreaterThanOrEqual(t.msgs[i - 1].at)
@@ -223,13 +241,13 @@ describe('bug checks (support → product)', () => {
   })
 
   it('every seeded check was run by an agent from the pool', () => {
-    for (const b of engine.state.bugChecks) {
+    for (const b of seedBugChecks()) {
       expect(ENGINEERS.some((e) => e.name === b.agent.name && e.model === b.agent.model)).toBe(true)
     }
   })
 
   it('confirmed checks carry file/commit receipts; misses carry none', () => {
-    const confirmed = engine.state.bugChecks.filter((b) => b.verdict === 'confirmed')
+    const confirmed = seedBugChecks().filter((b) => b.verdict === 'confirmed')
     expect(confirmed.length).toBeGreaterThan(0)
     for (const b of confirmed) {
       expect(b.chips.length).toBeGreaterThan(0)
@@ -238,7 +256,8 @@ describe('bug checks (support → product)', () => {
   })
 
   it('seeded checks include an honest not-reproduced verdict', () => {
-    expect(engine.state.bugChecks.some((b) => b.verdict === 'not-reproduced')).toBe(true)
+    expect(seedBugChecks().some((b) => b.verdict === 'not-reproduced')).toBe(true)
+    expect(engine.state.bugChecks).toEqual([]) // live-only boots empty
   })
 
   it('the Bug Checker bills to product', () => {
@@ -247,11 +266,12 @@ describe('bug checks (support → product)', () => {
 })
 
 describe('bank + rails (finance)', () => {
-  it('Bob the Banker opens with $300k–$500k', () => {
+  it('Perflo opens with no simulated balance — sim is off', () => {
     const b = engine.state.bank
-    expect(b.name).toBe('Bob the Banker')
-    expect(b.balance).toBeGreaterThanOrEqual(300_000)
-    expect(b.balance).toBeLessThanOrEqual(500_000)
+    expect(b.name).toBe('Perflo')
+    expect(b.live).toBe(false)
+    expect(b.balance).toBe(0)
+    expect(engine.state.funding.source).toBe('stripe') // costs → Stripe until Perflo is live
   })
 
   it('allocation percentages always sum to exactly 100', () => {
@@ -295,7 +315,8 @@ describe('forecastP50', () => {
 
   it('falls back to a growth estimate when no forecasters have run', () => {
     engine.state.forecasters = []
-    expect(engine.forecastP50()).toBe(Math.round(engine.state.mrr * 1.09))
+    // live-only anchors the model view at BOOT_MRR (real MRR can be $0)
+    expect(engine.forecastP50()).toBe(Math.round(Math.max(engine.state.mrr, BOOT_MRR) * 1.09))
   })
 })
 
