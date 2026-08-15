@@ -79,8 +79,8 @@ describe('opportunityBody', () => {
     expect(body.tasks[0].task_type).toBe('activity')
     expect(body.tasks[0].duration_minutes).toBe(5)
     expect(body.tasks[0].task_url).toContain('/review')
-    expect(body.description).toContain('agentbasis.co')
-    expect(body.screening_questions.some((q: any) => q.key === 'opened')).toBe(true)
+    expect(body.description).toContain('Approve or Revise')
+    expect(body.screening_questions.some((q: any) => q.key === 'verdict')).toBe(true)
   })
 })
 
