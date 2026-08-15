@@ -10,6 +10,16 @@ import {
 } from './terac.ts'
 
 describe('parseVerdict', () => {
+  it('reads Yes would-pay as approved', () => {
+    const r = parseVerdict([{ key: 'verdict', answer: 'Yes — I would pay' }])
+    expect(r.verdict).toBe('approved')
+  })
+
+  it('reads Maybe as revised', () => {
+    const r = parseVerdict([{ key: 'verdict', answer: 'Maybe — if they changed one thing' }])
+    expect(r.verdict).toBe('revised')
+  })
+
   it('reads Approve from the verdict screening answer', () => {
     const r = parseVerdict([
       { key: 'verdict', answer: 'Approve — post as written' },
@@ -54,6 +64,23 @@ describe('opportunityBody', () => {
     for (const q of body.screening_questions) {
       expect(q.answers.length).toBeGreaterThanOrEqual(2)
     }
+  })
+
+  it('is a cheap 1-person activity (no AI interview)', () => {
+    const body = opportunityBody('p1', {
+      feature: 'webhooks v2',
+      post: 'shipped.',
+      voice: 'direct',
+      clusterTitle: 'infra reviewer',
+    })
+    expect(body.num_participants).toBe(1)
+    expect(body.business_type).toBe('b2c')
+    expect(body.unrestricted_audience).toBe(true)
+    expect(body.tasks[0].task_type).toBe('activity')
+    expect(body.tasks[0].duration_minutes).toBe(5)
+    expect(body.tasks[0].task_url).toContain('/review')
+    expect(body.description).toContain('agentbasis.co')
+    expect(body.screening_questions.some((q: any) => q.key === 'opened')).toBe(true)
   })
 })
 
@@ -111,10 +138,25 @@ describe('parseShipVerdict', () => {
     const r = parseShipVerdict([{ key: 'verdict', answer: 'Reject — research or PR does not hold' }])
     expect(r.verdict).toBe('rejected')
   })
+
+  it('ships only when yes + code is ready', () => {
+    const yes = parseShipVerdict([
+      { key: 'ship', answer: 'Yes — ship it' },
+      { key: 'code', answer: 'Yes — code is ready to merge' },
+    ])
+    expect(yes.verdict).toBe('approved')
+    const ideaOnly = parseShipVerdict([
+      { key: 'ship', answer: 'Yes — ship it' },
+      { key: 'code', answer: 'No — not perfect, needs work' },
+    ])
+    expect(ideaOnly.verdict).toBe('rejected')
+    const no = parseShipVerdict([{ key: 'ship', answer: 'No — do not ship' }])
+    expect(no.verdict).toBe('rejected')
+  })
 })
 
 describe('shipOpportunityBody', () => {
-  it('asks the expert to verify research and the PR together', () => {
+  it('asks the human: ship this PR, then is the code ready', () => {
     const body = shipOpportunityBody('p1', {
       kind: 'verify',
       feature: 'SSO',
@@ -124,13 +166,21 @@ describe('shipOpportunityBody', () => {
       prNumber: 81,
       files: 'src/auth/sso.ts',
     })
-    const verdict = body.screening_questions.find((q: any) => q.key === 'verdict')!
-    expect(body.title).toMatch(/research→PR/)
-    expect(verdict.text).toContain('#81')
-    expect(verdict.text).toContain('Loopwork shipped SSO')
-    expect(verdict.answers[0].text).toMatch(/Approve/)
-    expect(verdict.answers[1].text).toMatch(/Reject/)
+    const ship = body.screening_questions.find((q: any) => q.key === 'ship')!
+    const code = body.screening_questions.find((q: any) => q.key === 'code')!
+    expect(ship.answers[0].text).toMatch(/Yes — ship/)
+    expect(ship.answers[1].text).toMatch(/do not ship/)
+    expect(code.answers[0].text).toMatch(/ready to merge/)
+    expect(code.display_condition.conditions[0].screening_question).toBe('ship')
+    expect(body.description).toContain('Loopwork shipped SSO')
+    expect(body.description).toContain('https://github.com/')
+    expect(body.description).toContain('/pull/81')
     expect(body.description).toContain('src/auth/sso.ts')
+    expect(body.tasks[0].task_url).toContain('/review')
+    expect(body.num_participants).toBe(1)
+    expect(body.tasks[0].duration_minutes).toBe(5)
+    expect(body.tasks[0].task_type).toBe('activity')
+    expect(body.business_type).toBe('b2c')
   })
 })
 

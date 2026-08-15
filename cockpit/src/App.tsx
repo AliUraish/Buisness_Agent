@@ -33,7 +33,7 @@ function TopBar({ mode, setMode }: { mode: number; setMode: (m: number) => void 
   return (
     <header className="topbar">
       <div className="wordmark">
-        ZeroCo <span>/ autonomous ops</span>
+        Business_Agent <span>/ autonomous ops</span>
       </div>
       <nav className="tabs">
         {MODES.map((m, i) => (

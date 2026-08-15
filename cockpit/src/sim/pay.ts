@@ -1,4 +1,4 @@
-// Thin client for the ZeroCo backend's payment reads (Stripe test + Whop).
+// Thin client for the Business_Agent backend's payment reads (Stripe test + Whop).
 
 export interface RailSummary {
   live: boolean

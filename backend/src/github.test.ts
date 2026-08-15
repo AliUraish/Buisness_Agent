@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { commitsPerDay, extractFeatures, parseConventional, parsePrNumber, pickDefaultRepo } from './github.ts'
+import { commitsPerDay, extractFeatures, featureModule, isSdkShipFile, parseConventional, parsePrNumber, pickDefaultRepo } from './github.ts'
 
 describe('parseConventional', () => {
   it('reads feat with a PascalCase scope', () => {
@@ -95,5 +95,30 @@ describe('pickDefaultRepo', () => {
     expect(pickDefaultRepo('AliUraish', [{ fullName: 'AliUraish/Agentalize', pushedAt: 8, private: false }], 'AliUraish/PocketX')).toBe(
       'AgentBasis/agentbasis-python-sdk',
     )
+  })
+})
+
+describe('isSdkShipFile', () => {
+  it('only allows python modules under agentbasis/', () => {
+    expect(isSdkShipFile('agentbasis/llms/openai/tool_spans.py')).toBe(true)
+    expect(isSdkShipFile('/agentbasis/context_redaction.py')).toBe(true)
+    expect(isSdkShipFile('src/auth/sso.ts')).toBe(false)
+    expect(isSdkShipFile('agentbasis/../secrets.py')).toBe(false)
+    expect(isSdkShipFile('agentbasis/readme.md')).toBe(false)
+  })
+})
+
+describe('featureModule', () => {
+  it('is valid-enough python that names the feature and the research brief', () => {
+    const src = featureModule({
+      slug: 'openai-tool-spans',
+      name: 'OpenAI tool_use spans',
+      summary: 'tool_use names on the request span',
+      brief: 'OpenLLMetry already records tool names; we did not.',
+    })
+    expect(src).toContain('FEATURE = "openai-tool-spans"')
+    expect(src).toContain('OpenAI tool_use spans')
+    expect(src).toContain('OpenLLMetry')
+    expect(src).toContain('def apply(')
   })
 })

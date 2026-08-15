@@ -28,12 +28,12 @@ const STATUS_LABEL: Record<string, string> = {
 const STAGE_LABEL: Record<ShipStage, string> = {
   researching: 'researching',
   briefed: 'brief forwarded',
-  building: 'agents building…',
-  'pr-open': 'PR open — Terac verify not armed',
-  'hiring-verify': 'hiring Terac verifier…',
-  'awaiting-verify': 'waiting on Terac — research → PR',
+  building: 'revising the python SDK…',
+  'pr-open': 'PR open on GitHub',
+  'hiring-verify': 'hiring verifier…',
+  'awaiting-verify': 'waiting on verify',
   rejected: 'PR rejected',
-  shipped: 'shipped',
+  shipped: 'shipped on main',
   blocked: 'blocked',
 }
 
@@ -153,7 +153,7 @@ function ShipPipeline() {
       </div>
       {!job && (
         <div className="ship-idle dim">
-          Three intel agents scan rivals. A matrix gap gets a brief and a PR. Terac verifies research → PR (not armed).
+          Three intel agents scan rivals. Gaps forward to product. Repo Agent researches, revises agentbasis-python-sdk, and squash-merges on GitHub — ongoing, no Terac.
         </div>
       )}
       {job && (
@@ -180,20 +180,30 @@ function ShipPipeline() {
           </div>
           {job.pr && (
             <div className="ship-pr">
-              <span className="ship-pr-num num">PR #{job.pr.number}</span>
+              {job.pr.url ? (
+                <a className="ship-pr-num num" href={job.pr.url} target="_blank" rel="noreferrer">
+                  PR #{job.pr.number}
+                </a>
+              ) : (
+                <span className="ship-pr-num num">PR #{job.pr.number}</span>
+              )}
               <span className="ship-pr-title">{job.pr.title}</span>
               <span className="chip">{job.pr.branch}</span>
               <span className="chip">{job.pr.file}</span>
               <span className="chip num">{job.pr.sha}</span>
+              {job.pr.merged && <span className="chip">merged</span>}
             </div>
           )}
-          <GateStrip
-            label={`Verify research → PR${job.pr ? ` #${job.pr.number}` : ''}`}
-            gate={job.gate}
-            waiting={job.pr ? `Waiting on a verified expert — does research → PR #${job.pr.number} hold up?` : 'Waiting on a verifier'}
-            doneYes="research and PR hold up — ship it"
-            doneNo="research or PR does not hold"
-          />
+          {job.stage === 'blocked' && job.gate.reason && <div className="ship-brief-t">{job.gate.reason}</div>}
+          {(job.gate.status !== 'idle' || job.gate.verdict) && (
+            <GateStrip
+              label={`Verify research → PR${job.pr ? ` #${job.pr.number}` : ''}`}
+              gate={job.gate}
+              waiting={job.pr ? `Waiting on a verified expert — does research → PR #${job.pr.number} hold up?` : 'Waiting on a verifier'}
+              doneYes="research and PR hold up — ship it"
+              doneNo="research or PR does not hold"
+            />
+          )}
         </>
       )}
     </div>
@@ -214,7 +224,7 @@ function CapabilityMatrix() {
           <thead>
             <tr>
               <th>capability</th>
-              <th className="c us">ZeroCo</th>
+              <th className="c us">Business_Agent</th>
               {s.competitors.map((c) => (
                 <th className="c" key={c.id}>
                   {c.name}
@@ -262,6 +272,9 @@ function IntelFeed() {
             <span className="dim num t">{ago(m.at, now)}</span>
             <span className="intel-comp">{m.comp}</span>
             <span className="intel-text">{m.text}</span>
+            {m.sources?.slice(0, 2).map((src) => (
+              <span key={src} className="chip">{src}</span>
+            ))}
             {m.counter ? (
               <span className="counter-chip">
                 <svg width="18" height="8" viewBox="0 0 18 8">

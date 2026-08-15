@@ -59,12 +59,13 @@ npm run dev
    donut, and the post strip with predicted-vs-actual engagement bars — hits get
    a green check, misses get an honest gray dash.
 6. **Competition** — three intel agents (Changelog Scout, Gap Analyst, Brief
-   Writer) watch rivals and forward matrix gaps to product. Agents open a PR.
-   Terac's job is one verification of **research → PR** (does the gap hold,
-   and does the PR cover it). That hire is **not armed** — the pipeline
-   stops at a ready PR. Flip `SHIP_TERAC_ARMED` in `src/sim/engine.ts` to
-   hire. The PR is drafted in-cockpit; Product observes GitHub and does not
-   push.
+   Writer) watch rivals and forward gaps to product. Product then **ships
+   for real** on `AgentBasis/agentbasis-python-sdk`: Repo Agent opens a
+   `zeroco/` branch, writes a python module under `agentbasis/`, squash-merges,
+   and queues marketing. First ship ~10s after boot, then every ~3 minutes
+   (cap 6/session). Terac is **not** used (`backend/Agent.md`). Requires
+   `GITHUB_TOKEN` with push on that repo. Without a token the write fails
+   honestly — no fake merge.
 7. **Investment** — the market desk. Five live crypto charts (BTC · ETH ·
    SOL · DOGE · AVAX) tick on a simulated Alpaca paper-trading feed. Five
    desk agents (Prudence, Momentum, Quant, Runway Guardian, Yield Scout)
@@ -108,10 +109,12 @@ npm run dev
    LINQ_INTEGRATION_TOKEN=...
    LINQ_SEND_FROM=+1XXXXXXXXXX     # your Linq org number
    LINQ_TEST_PHONE=+1XXXXXXXXXX    # the ONLY number the demo will ever text
+   STRIPE_PAYMENT_LINK=https://buy.stripe.com/...   # subscribe link the agent texts
    ```
 
-   Sends go only to the test phone, at most one real send per session; the
-   LINQ LIVE/OFF chip always states the mode.
+   Sends go only to the test phone, at most one real send per session; onboard
+   uses that shot to deliver the Stripe subscribe link. LINQ LIVE / SUBSCRIBE
+   LINK chips state the mode.
 
 ## Architecture
 

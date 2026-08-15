@@ -1,4 +1,4 @@
-// Thin client for the ZeroCo backend's Linq routes. The integration token
+// Thin client for the Business_Agent backend's Linq routes. The integration token
 // and phone numbers live in /backend — this file only talks to /api/linq.
 
 export interface LinqSendResult {
@@ -8,6 +8,12 @@ export interface LinqSendResult {
   service: string | null
   deliveryStatus: string | null
   error: string | null
+  text?: string | null
+}
+
+export interface LinqStatus {
+  live: boolean
+  paymentLink: string | null
 }
 
 const BASE = '/api/linq'
@@ -35,12 +41,30 @@ async function api<T>(path: string, init?: RequestInit, timeoutMs = 20000): Prom
   }
 }
 
-export async function refreshLinqStatus(): Promise<boolean> {
+export async function refreshLinqStatus(): Promise<LinqStatus> {
   try {
-    const s = await api<{ live: boolean }>('/status', undefined, 4000)
-    return Boolean(s.live)
+    const s = await api<LinqStatus>('/status', undefined, 4000)
+    return { live: Boolean(s.live), paymentLink: s.paymentLink ?? null }
   } catch {
-    return false
+    return { live: false, paymentLink: null }
+  }
+}
+
+export async function sendLinqOnboard(): Promise<LinqSendResult> {
+  try {
+    return await api<LinqSendResult>('/onboard', { method: 'POST' })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    const down = /failed to fetch|network|abort/i.test(msg)
+    return {
+      live: false,
+      chatId: null,
+      messageId: null,
+      service: null,
+      deliveryStatus: null,
+      error: down ? 'Backend not reachable. Run npm run dev in /backend.' : msg.slice(0, 180),
+      text: null,
+    }
   }
 }
 

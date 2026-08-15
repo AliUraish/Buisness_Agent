@@ -1,5 +1,5 @@
-// Owns the GitHub REST scan. The token stays here — Cockpit never sees it.
-// Observes commits + PRs and extracts committed features. Does not ship.
+// Owns the GitHub REST scan and the agent ship writes. The token stays here —
+// Cockpit never sees it. Pinned to AgentBasis/agentbasis-python-sdk.
 
 import { GITHUB_TOKEN } from './env.ts'
 
@@ -223,17 +223,24 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms))
 }
 
-async function ghget(path: string, timeoutMs = 15000): Promise<{ ok: boolean; status: number; json: any }> {
+async function ghreq(
+  path: string,
+  init?: { method?: string; body?: unknown; timeoutMs?: number },
+): Promise<{ ok: boolean; status: number; json: any }> {
   const ctl = new AbortController()
-  const t = setTimeout(() => ctl.abort(), timeoutMs)
+  const t = setTimeout(() => ctl.abort(), init?.timeoutMs ?? 20000)
   try {
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${GITHUB_TOKEN}`,
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'business-agent-backend',
+    }
+    if (init?.body != null) headers['Content-Type'] = 'application/json'
     const res = await fetch(BASE + path, {
-      headers: {
-        Authorization: `Bearer ${GITHUB_TOKEN}`,
-        Accept: 'application/vnd.github+json',
-        'X-GitHub-Api-Version': '2022-11-28',
-        'User-Agent': 'zeroco-backend',
-      },
+      method: init?.method ?? 'GET',
+      headers,
+      body: init?.body != null ? JSON.stringify(init.body) : undefined,
       signal: ctl.signal,
     })
     const text = await res.text()
@@ -251,6 +258,10 @@ async function ghget(path: string, timeoutMs = 15000): Promise<{ ok: boolean; st
   } finally {
     clearTimeout(t)
   }
+}
+
+function ghget(path: string, timeoutMs = 15000) {
+  return ghreq(path, { timeoutMs })
 }
 
 function errMsg(json: any, fallback: string): string {
@@ -379,3 +390,161 @@ export async function scanRepo(_requested?: string | null): Promise<GithubScan> 
   cache = { key: repo, at: Date.now(), payload }
   return payload
 }
+
+export interface GithubShipInput {
+  slug: string
+  name: string
+  summary: string
+  brief: string
+  file: string
+}
+
+export interface GithubShipResult {
+  live: boolean
+  merged: boolean
+  number: number
+  title: string
+  branch: string
+  file: string
+  sha: string
+  url: string | null
+  error: string | null
+}
+
+export function isSdkShipFile(file: string): boolean {
+  const f = file.replace(/^\/+/, '')
+  return f.startsWith('agentbasis/') && !f.includes('..') && f.endsWith('.py')
+}
+
+export function featureModule(input: { slug: string; name: string; summary: string; brief: string }): string {
+  const slug = input.slug.replace(/[^a-z0-9_-]/gi, '_')
+  return `"""${input.name}
+
+${input.summary}
+
+${input.brief}
+
+Shipped by Business_Agent Repo Agent after Changelog Scout / Gap Analyst / Brief Writer research.
+"""
+from __future__ import annotations
+
+from typing import Any, Optional
+
+
+FEATURE = "${slug}"
+
+
+def apply(span: Optional[Any] = None, **attrs: Any) -> None:
+    """Record ${input.name} on an OpenTelemetry span."""
+    if span is None:
+        return
+    set_attr = getattr(span, "set_attribute", None)
+    if not callable(set_attr):
+        return
+    set_attr("agentbasis.feature", FEATURE)
+    for key, value in attrs.items():
+        if value is None:
+            continue
+        set_attr(f"agentbasis.{key}", value)
+`
+}
+
+function emptyShip(file: string, error: string): GithubShipResult {
+  return {
+    live: isGithubLive(),
+    merged: false,
+    number: 0,
+    title: '',
+    branch: '',
+    file,
+    sha: '',
+    url: null,
+    error,
+  }
+}
+
+export async function shipFeature(input: GithubShipInput): Promise<GithubShipResult> {
+  if (!isGithubLive()) {
+    return emptyShip(input.file, 'Set GITHUB_TOKEN in the workspace .env, then restart the backend.')
+  }
+
+  const repo = FOCUS_REPO
+  const meta = await ghget(`/repos/${repo}`)
+  if (!meta.ok) return emptyShip(input.file, errMsg(meta.json, `GitHub ${meta.status}`))
+  const base = String(meta.json?.default_branch ?? 'main')
+  const ref = await ghget(`/repos/${repo}/git/ref/heads/${encodeURIComponent(base)}`)
+  if (!ref.ok) return emptyShip(input.file, errMsg(ref.json, `GitHub ${ref.status}`))
+  const sha = String(ref.json?.object?.sha ?? '')
+  if (!sha) return emptyShip(input.file, `No SHA for ${base}`)
+
+  const stem = `business_agent/${input.slug}`.replace(/[^a-z0-9/_-]+/gi, '-').replace(/\/{2,}/g, '/').slice(0, 48)
+  let branch = stem
+  let created = await ghreq(`/repos/${repo}/git/refs`, {
+    method: 'POST',
+    body: { ref: `refs/heads/${branch}`, sha },
+    timeoutMs: 45000,
+  })
+  if (!created.ok) {
+    branch = `${stem}-${Date.now().toString(36).slice(-5)}`.slice(0, 60)
+    created = await ghreq(`/repos/${repo}/git/refs`, {
+      method: 'POST',
+      body: { ref: `refs/heads/${branch}`, sha },
+      timeoutMs: 45000,
+    })
+    if (!created.ok) return emptyShip(input.file, errMsg(created.json, `GitHub ${created.status}`))
+  }
+
+  let file = input.file.replace(/^\/+/, '')
+  if (!isSdkShipFile(file)) {
+    return emptyShip(file, 'Ship files must be python modules under agentbasis/')
+  }
+  const putBody = {
+    message: `feat: ${input.name}\n\n${input.summary}\n\n${input.brief}`,
+    content: Buffer.from(featureModule(input), 'utf8').toString('base64'),
+    branch,
+  }
+  let put = await ghreq(`/repos/${repo}/contents/${file}`, { method: 'PUT', body: putBody, timeoutMs: 45000 })
+  if (!put.ok && (put.status === 422 || put.status === 409)) {
+    const tagged = file.replace(/\.py$/, `_${Date.now().toString(36).slice(-4)}.py`)
+    put = await ghreq(`/repos/${repo}/contents/${tagged}`, { method: 'PUT', body: putBody, timeoutMs: 45000 })
+    if (put.ok) file = tagged
+  }
+  if (!put.ok) return emptyShip(file, errMsg(put.json, `GitHub ${put.status}`))
+  const commitSha = String(put.json?.commit?.sha ?? put.json?.content?.sha ?? '')
+
+  const pr = await ghreq(`/repos/${repo}/pulls`, {
+    method: 'POST',
+    body: {
+      title: `feat: ${input.name}`,
+      head: branch,
+      base,
+      body:
+        `## Research\n${input.brief}\n\n## Summary\n${input.summary}\n\n` +
+        `Opened and merged by Business_Agent Repo Agent on ${repo}.`,
+    },
+    timeoutMs: 45000,
+  })
+  if (!pr.ok) return emptyShip(file, errMsg(pr.json, `GitHub ${pr.status}`))
+  const number = Number(pr.json?.number)
+  const url = pr.json?.html_url != null ? String(pr.json.html_url) : null
+  const title = String(pr.json?.title ?? `feat: ${input.name}`)
+
+  const merged = await ghreq(`/repos/${repo}/pulls/${number}/merge`, {
+    method: 'PUT',
+    body: { merge_method: 'squash', commit_title: `feat: ${input.name} (#${number})` },
+    timeoutMs: 45000,
+  })
+  cache = null
+  return {
+    live: true,
+    merged: merged.ok,
+    number,
+    title,
+    branch,
+    file,
+    sha: String(merged.json?.sha ?? commitSha).slice(0, 40),
+    url,
+    error: merged.ok ? null : errMsg(merged.json, `merge ${merged.status}`),
+  }
+}
+

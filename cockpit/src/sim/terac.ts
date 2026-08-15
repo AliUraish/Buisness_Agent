@@ -1,4 +1,4 @@
-// Thin client for the ZeroCo backend. Terac keys and the hire live in
+// Thin client for the Business_Agent backend. Terac keys and the hire live in
 // /backend — this file only talks to /api/terac.
 
 export interface TeracReview {
@@ -180,4 +180,42 @@ export async function hireShipReview(input: {
 
 export async function pollShipReview(jobId: string): Promise<Pick<TeracShipReview, 'verdict' | 'reason' | 'expert'>> {
   return api(`/ships/${encodeURIComponent(jobId)}`)
+}
+
+
+// ── Treasury allocation review (finance) ─────────────────────────
+export interface TeracAllocationReview {
+  live: boolean
+  jobId: string
+  dashboardUrl: string | null
+  quote: number | null
+  expert: string | null
+  verdict: 'approved' | 'adjust' | 'waiting' | 'error'
+  reason: string
+}
+
+export async function hireAllocationReview(input: {
+  bankName: string
+  balance: number
+  alloc: { label: string; pct: number }[]
+  rationale: string
+}): Promise<TeracAllocationReview> {
+  try {
+    return await api<TeracAllocationReview>('/allocations', { method: 'POST', body: JSON.stringify(input) }, 40000)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    return {
+      live: false,
+      jobId: '',
+      dashboardUrl: null,
+      quote: null,
+      expert: null,
+      verdict: 'error',
+      reason: msg.slice(0, 180),
+    }
+  }
+}
+
+export async function pollAllocationReview(jobId: string): Promise<Pick<TeracAllocationReview, 'verdict' | 'reason' | 'expert'>> {
+  return api(`/allocations/${encodeURIComponent(jobId)}`)
 }

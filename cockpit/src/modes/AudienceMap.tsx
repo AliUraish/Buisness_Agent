@@ -135,7 +135,7 @@ function SimPanel({ sim }: { sim: CampaignSim }) {
             {sim.stage === 'idle'
               ? pick
                 ? `Start will post ${pick.feature}`
-                : '5 agents · queue posts for @zeroco'
+                : '5 agents · queue posts for @business_agent'
               : `campaign #${sim.campaign} — ${sim.feature}`}
           </span>
         </div>
@@ -225,7 +225,7 @@ function DraftCard({ d, sim, winner }: { d: DraftPost; sim: CampaignSim; winner:
         {d.status === 'ready' && d.text}
       </div>
       <div className="draft-foot num">
-        {sim.stage === 'voting' || sim.stage === 'reviewing' || sim.stage === 'posted' ? `${votes} vote${votes === 1 ? '' : 's'}` : '@zeroco'}
+        {sim.stage === 'voting' || sim.stage === 'reviewing' || sim.stage === 'posted' ? `${votes} vote${votes === 1 ? '' : 's'}` : '@business_agent'}
       </div>
     </div>
   )

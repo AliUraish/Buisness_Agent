@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AgentBasis — Subscribe</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0b0c0e;
+      --panel: #14161a;
+      --ink: #f2f1ec;
+      --muted: #9a9a92;
+      --line: rgba(242,241,236,.12);
+      --accent: #c8f542;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--ink);
+      font-family: "IBM Plex Sans", system-ui, sans-serif;
+      font-size: 16px;
+      line-height: 1.5;
+    }
+    .bar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 18px 28px; border-bottom: 1px solid var(--line);
+    }
+    .logo { font-family: "IBM Plex Mono", monospace; font-weight: 500; letter-spacing: .04em; }
+    .logo span { color: var(--accent); }
+    a { color: var(--accent); }
+    .hero { max-width: 720px; margin: 0 auto; padding: 72px 24px 48px; }
+    .kicker {
+      font-family: "IBM Plex Mono", monospace; font-size: 12px; letter-spacing: .14em;
+      text-transform: uppercase; color: var(--muted); margin-bottom: 16px;
+    }
+    h1 { font-size: clamp(32px, 5vw, 48px); font-weight: 600; letter-spacing: -.03em; line-height: 1.1; margin-bottom: 16px; }
+    .lede { color: var(--muted); font-size: 18px; max-width: 540px; margin-bottom: 28px; }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 56px; }
+    .cta, .ghost {
+      display: inline-flex; align-items: center; justify-content: center;
+      height: 44px; padding: 0 18px; border-radius: 6px; font-weight: 500; text-decoration: none;
+      font-size: 14px;
+    }
+    .cta { background: var(--accent); color: #111; }
+    .ghost { border: 1px solid var(--line); color: var(--ink); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; }
+    .card h2 { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+    .card p { font-size: 13px; color: var(--muted); }
+    .plan {
+      margin-top: 48px; background: var(--panel); border: 1px solid var(--line);
+      border-radius: 12px; padding: 28px; display: flex; justify-content: space-between;
+      gap: 24px; flex-wrap: wrap; align-items: center;
+    }
+    .price { font-size: 40px; font-weight: 600; letter-spacing: -.04em; }
+    .price em { font-style: normal; font-size: 16px; color: var(--muted); font-weight: 400; }
+    .fine { color: var(--muted); font-size: 13px; margin-top: 6px; }
+    footer { padding: 32px 28px 48px; color: var(--muted); font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <div class="logo">AGENT<span>BASIS</span></div>
+    <a href="https://agentbasis.co" target="_blank" rel="noopener">Full product →</a>
+  </div>
+  <main class="hero">
+    <p class="kicker">The OS for AI agents</p>
+    <h1>Infrastructure for a reliable AI workforce.</h1>
+    <p class="lede">
+      AgentBasis is the control plane for autonomous agents — monitor, evaluate, crash-test, and ship.
+      Three lines of SDK. Traces on your dashboard. Subscribe here; agents run the company after you pay.
+    </p>
+    <div class="row">
+      <a class="cta" id="cta" href="__STRIPE_LINK__">Subscribe with Stripe</a>
+      <a class="ghost" href="https://agentbasis.co" target="_blank" rel="noopener">See agentbasis.co</a>
+    </div>
+    <div class="grid">
+      <div class="card">
+        <h2>Observability</h2>
+        <p>Real-time traces, latency, and health for every agent in one plane.</p>
+      </div>
+      <div class="card">
+        <h2>Evaluations</h2>
+        <p>Score accuracy, cost, and regressions before they hit production.</p>
+      </div>
+      <div class="card">
+        <h2>Crash testing</h2>
+        <p>Break agents on purpose. Watch how they recover. Ship only the ones that do.</p>
+      </div>
+    </div>
+    <div class="plan">
+      <div>
+        <div class="kicker">Subscriber plan</div>
+        <div class="price">$9 <em>/ month</em></div>
+        <p class="fine">Cancel anytime. Stripe checkout. Access starts when payment clears.</p>
+      </div>
+      <a class="cta" id="cta2" href="__STRIPE_LINK__">Start subscription</a>
+    </div>
+  </main>
+  <footer>AgentBasis · pip install agentbasis · <a href="https://agentbasis.co">agentbasis.co</a></footer>
+  <script>
+    fetch('/api/linq/status').then((r) => r.json()).then((s) => {
+      if (!s.paymentLink) return
+      document.getElementById('cta').href = s.paymentLink
+      document.getElementById('cta2').href = s.paymentLink
+    }).catch(() => {})
+  </script>
+</body>
+</html>
