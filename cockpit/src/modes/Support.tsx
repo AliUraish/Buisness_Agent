@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Ticket, TicketStatus } from '../sim/engine'
+import { engine, Ticket, TicketStatus } from '../sim/engine'
 import { useEngineTick } from '../App'
 
 function clock(ts: number) {
@@ -58,6 +58,10 @@ function StatsStrip() {
   return (
     <div className="panel-plain support-stats num">
       {s.linqLive ? <span className="testmode live">LINQ LIVE</span> : <span className="testmode off">LINQ OFF</span>}
+      {s.paymentLink ? <span className="testmode live">SUBSCRIBE LINK</span> : <span className="testmode off">NO SUBSCRIBE LINK</span>}
+      <button className="start-pill" type="button" onClick={() => void engine.sendOnboard()}>
+        Text subscribe link
+      </button>
       <span className="sstat">
         <b>{open}</b> open
       </span>
@@ -160,15 +164,15 @@ function Thread({ ticket }: { ticket: Ticket | null }) {
             <div className={'bubble ' + m.from}>
               <div className="bubble-text">{m.text}</div>
               <div className="bubble-meta num">
-                {m.from === 'zeroco' ? `${m.agent ?? 'ZeroCo'} · ${m.via === 'linq' ? 'Linq' : 'sim'} · ` : ''}
+                {m.from === 'business_agent' ? `${m.agent ?? 'Business_Agent'} · ${m.via === 'linq' ? 'Linq' : 'sim'} · ` : ''}
                 {clock(m.at)}
               </div>
             </div>
           </div>
         ))}
         {busy && (
-          <div className="bubble-row zeroco">
-            <div className="bubble zeroco ghost">
+          <div className="bubble-row business_agent">
+            <div className="bubble business_agent ghost">
               <div className="bubble-text dim">{ticket.status === 'drafting' ? 'Support Writer drafting…' : 'Support QA reviewing…'}</div>
             </div>
           </div>
