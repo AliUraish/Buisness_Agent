@@ -33,7 +33,10 @@ export const TERAC_API_KEY = (process.env.TERAC_API_KEY ?? '').trim()
 export const PORT = Number(process.env.PORT ?? 8787)
 export const X_BEARER_TOKEN = (process.env.X_BEARER_TOKEN ?? process.env.TWITTER_BEARER_TOKEN ?? '').trim()
 export const GITHUB_TOKEN = (process.env.GITHUB_TOKEN ?? '').trim()
-export const GITHUB_REPO = (process.env.GITHUB_REPO ?? '').trim().replace(/^https?:\/\/github\.com\//, '').replace(/\.git$/, '')
+export const COMPANY_NAME = 'Bob the Busines'
+export const PRODUCT_REPO = 'AliUraish/Buisness_Agent'
+export const GITHUB_REPO =
+  (process.env.GITHUB_REPO ?? '').trim().replace(/^https?:\/\/github\.com\//, '').replace(/\.git$/, '') || PRODUCT_REPO
 
 // Linq messaging (customer service): integration token, the org's
 // messaging-enabled number to send from, and the ONLY recipient we will
