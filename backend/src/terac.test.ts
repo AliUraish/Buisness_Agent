@@ -10,6 +10,16 @@ import {
 } from './terac.ts'
 
 describe('parseVerdict', () => {
+  it('reads Yes would-pay as approved', () => {
+    const r = parseVerdict([{ key: 'verdict', answer: 'Yes — I would pay' }])
+    expect(r.verdict).toBe('approved')
+  })
+
+  it('reads Maybe as revised', () => {
+    const r = parseVerdict([{ key: 'verdict', answer: 'Maybe — if they changed one thing' }])
+    expect(r.verdict).toBe('revised')
+  })
+
   it('reads Approve from the verdict screening answer', () => {
     const r = parseVerdict([
       { key: 'verdict', answer: 'Approve — post as written' },
@@ -54,6 +64,23 @@ describe('opportunityBody', () => {
     for (const q of body.screening_questions) {
       expect(q.answers.length).toBeGreaterThanOrEqual(2)
     }
+  })
+
+  it('is a cheap 1-person activity (no AI interview)', () => {
+    const body = opportunityBody('p1', {
+      feature: 'webhooks v2',
+      post: 'shipped.',
+      voice: 'direct',
+      clusterTitle: 'infra reviewer',
+    })
+    expect(body.num_participants).toBe(1)
+    expect(body.business_type).toBe('b2c')
+    expect(body.unrestricted_audience).toBe(true)
+    expect(body.tasks[0].task_type).toBe('activity')
+    expect(body.tasks[0].duration_minutes).toBe(5)
+    expect(body.tasks[0].task_url).toContain('/review')
+    expect(body.description).toContain('agentbasis.co')
+    expect(body.screening_questions.some((q: any) => q.key === 'opened')).toBe(true)
   })
 })
 
@@ -125,12 +152,23 @@ describe('shipOpportunityBody', () => {
       files: 'src/auth/sso.ts',
     })
     const verdict = body.screening_questions.find((q: any) => q.key === 'verdict')!
-    expect(body.title).toMatch(/research→PR/)
-    expect(verdict.text).toContain('#81')
-    expect(verdict.text).toContain('Loopwork shipped SSO')
     expect(verdict.answers[0].text).toMatch(/Approve/)
     expect(verdict.answers[1].text).toMatch(/Reject/)
+    // the reviewer interface: research, feature, and the PUBLIC PR link in one doc
+    expect(body.description).toContain('Loopwork shipped SSO')
+    expect(body.description).toContain('https://github.com/')
+    expect(body.description).toContain('/pull/81')
     expect(body.description).toContain('src/auth/sso.ts')
+    // one human, cheapest legal study
+    expect(body.num_participants).toBe(1)
+    expect(body.tasks[0].duration_minutes).toBe(5)
+    expect(body.tasks[0].task_type).toBe('activity')
+    expect(body.business_type).toBe('b2c')
+    expect(body.num_participants).toBe(1)
+    // per-item checks exist for each section
+    for (const key of ['research_check', 'feature_check', 'pr_check']) {
+      expect(body.screening_questions.some((q: any) => q.key === key)).toBe(true)
+    }
   })
 })
 
