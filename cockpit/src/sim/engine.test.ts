@@ -104,13 +104,19 @@ describe('competition + investment seed state', () => {
     expect(AGENT_DEPT['Brief Writer']).toBe('alerts')
   })
 
-  it('does not arm Terac on the SDK ship loop — research merges on GitHub', () => {
-    expect(SHIP_TERAC_ARMED).toBe(false)
+  it('hires Terac on the ship loop — humans review the PR before merge', () => {
+    expect(SHIP_TERAC_ARMED).toBe(true)
   })
 
-  it('ships nothing until a product repo is named', () => {
-    expect(MAX_SDK_SHIPS).toBe(0)
-    expect(SDK_SHIPS).toHaveLength(0)
+  it('ships unique notes under product/ on AliUraish/Buisness_Agent, capped per session', () => {
+    expect(MAX_SDK_SHIPS).toBe(4)
+    expect(SDK_SHIPS.length).toBe(MAX_SDK_SHIPS)
+    const files = SDK_SHIPS.map((s) => s.file)
+    expect(new Set(files).size).toBe(files.length)
+    for (const s of SDK_SHIPS) {
+      expect(s.file.startsWith('product/')).toBe(true)
+      expect(s.file.endsWith('.md')).toBe(true)
+    }
   })
 
   it('at least one rival has a capability we do not — research has a gap to forward', () => {
