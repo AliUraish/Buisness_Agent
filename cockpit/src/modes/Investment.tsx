@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Asset, MarketRound, TradeGate } from '../sim/engine'
+import { Asset, LIVE_ONLY, MarketRound, TradeGate } from '../sim/engine'
 import { useEngineTick } from '../App'
 
 function clock(ts: number) {
@@ -146,7 +146,16 @@ function roiCell(v: number | undefined) {
 function DeskPanel() {
   const s = useEngineTick()
   const round: MarketRound | undefined = s.marketRounds[0]
-  if (!round) return null
+  if (!round) {
+    return (
+      <div className="panel-plain desk">
+        <div className="ledger-head">
+          <span>Prediction round · 30d ROI</span>
+          <span className="dim-label">desk paused — awaiting LLM API keys; live prices above are real (Alpaca)</span>
+        </div>
+      </div>
+    )
+  }
   const done = round.preds.filter((p) => p.roi != null).length
   const bySym = (id: string) => s.assets.find((a) => a.id === id)!
   return (
@@ -324,7 +333,7 @@ export default function Investment() {
   useNow(10_000) // keep clocks fresh between engine emits
   return (
     <div className="investment">
-      <TreasuryPanel />
+      {!LIVE_ONLY && <TreasuryPanel />}
       <MarketsRow />
       <DeskPanel />
       <PositionsPanel />
