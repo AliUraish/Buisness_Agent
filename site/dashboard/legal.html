@@ -4,16 +4,17 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Legal finances — Bob the Busines</title>
+  <!-- Superseded by the live backend page at /legal. -->
+  <script>
+    location.replace('http://127.0.0.1:8787/legal' + (location.search || ''))
+  </script>
+  <meta http-equiv="refresh" content="0; url=http://127.0.0.1:8787/legal" />
   <style>
     body { font-family: system-ui, sans-serif; max-width: 640px; margin: 48px auto; padding: 0 16px; color: #111; }
-    .k { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: #888; }
-    h1 { font-size: 22px; margin: 8px 0 12px; }
-    p { color: #555; line-height: 1.5; }
+    a { color: #1a56db; }
   </style>
 </head>
 <body>
-  <div class="k">Terac · legal finances</div>
-  <h1>Legal finances</h1>
-  <p>Placeholder. Replace this page. Terac already hires a human and opens this URL.</p>
+  <p>Redirecting to the live legal finances page… <a href="http://127.0.0.1:8787/legal">Open it directly</a> (backend must be running on port 8787).</p>
 </body>
 </html>
