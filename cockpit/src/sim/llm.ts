@@ -9,6 +9,7 @@ export interface LlmStatus {
   gemini: boolean
   callsUsed: number
   callsMax: number
+  remaining?: number
   spentUsd: number
 }
 
@@ -29,6 +30,21 @@ export async function fetchLlmStatus(): Promise<LlmStatus | null> {
     const res = await fetch('/api/llm/status')
     if (!res.ok) return null
     return (await res.json()) as LlmStatus
+  } catch {
+    return null
+  }
+}
+
+export async function rechargeLlmCredits(pack = 40): Promise<{ ok: boolean; added: number } | null> {
+  try {
+    const res = await fetch('/api/llm/recharge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pack }),
+    })
+    if (!res.ok) return null
+    const json = await res.json()
+    return { ok: Boolean(json?.ok), added: Number(json?.added ?? pack) }
   } catch {
     return null
   }
