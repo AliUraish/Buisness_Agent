@@ -35,6 +35,7 @@ const FALLBACK_MODEL: Record<Provider, string> = {
 }
 
 let callsUsed = 0
+let callsMax = MAX_CALLS
 let spentUsd = 0
 
 export interface LlmResult {
@@ -55,9 +56,16 @@ export function llmStatus() {
     openai: Boolean(OPENAI_API_KEY),
     gemini: Boolean(GEMINI_API_KEY),
     callsUsed,
-    callsMax: MAX_CALLS,
+    callsMax,
+    remaining: Math.max(0, callsMax - callsUsed),
     spentUsd: Number(spentUsd.toFixed(4)),
   }
+}
+
+export function rechargeCredits(pack = 40): { ok: true; added: number; callsUsed: number; callsMax: number; remaining: number } {
+  const added = Math.min(200, Math.max(1, Math.round(Number(pack) || 40)))
+  callsMax += added
+  return { ok: true, added, callsUsed, callsMax, remaining: Math.max(0, callsMax - callsUsed) }
 }
 
 function keyFor(p: Provider): string {
@@ -170,7 +178,7 @@ export async function complete(input: {
     error: null,
   }
   if (!keyFor(provider)) return { ...base, error: `${provider} key not configured` }
-  if (callsUsed >= MAX_CALLS) return { ...base, error: `session call cap reached (${MAX_CALLS}) — restart the backend to reset` }
+  if (callsUsed >= callsMax) return { ...base, error: `session call cap reached (${callsMax}) — Credit Buyer can recharge` }
 
   const maxTokens = Math.min(Math.max(input.maxTokens ?? 200, 16), MAX_TOKENS)
   callsUsed++
