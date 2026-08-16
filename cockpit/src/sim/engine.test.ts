@@ -380,6 +380,8 @@ describe('audience campaign sim', () => {
     expect(sim.votes.every((v) => v.pick == null && v.handle.startsWith('@'))).toBe(true)
     expect(sim.terac.status).toBe('idle')
     expect(sim.terac.live).toBe(false)
+    expect(engine.state.teracMcp.live).toBe(false)
+    expect(engine.state.teracMcp.url).toBe('https://terac.com/api/mcp')
     expect(sim.winnerId).toBe(null)
   })
 

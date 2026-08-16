@@ -41,12 +41,30 @@ async function api<T>(path: string, init?: RequestInit, timeoutMs = 90000): Prom
   }
 }
 
-export async function refreshTeracStatus(): Promise<boolean> {
+export interface TeracMcpStatus {
+  live: boolean
+  url: string
+  org: string | null
+  credits: number | null
+  tools: string[]
+  error: string | null
+}
+
+export interface TeracLinkStatus {
+  live: boolean
+  mcp: TeracMcpStatus | null
+}
+
+export function blankTeracMcp(): TeracMcpStatus {
+  return { live: false, url: 'https://terac.com/api/mcp', org: null, credits: null, tools: [], error: null }
+}
+
+export async function refreshTeracStatus(): Promise<TeracLinkStatus> {
   try {
-    const s = await api<{ live: boolean }>('/status', undefined, 4000)
-    return Boolean(s.live)
+    const s = await api<{ live: boolean; mcp?: TeracMcpStatus }>('/status', undefined, 8000)
+    return { live: Boolean(s.live), mcp: s.mcp ?? null }
   } catch {
-    return false
+    return { live: false, mcp: null }
   }
 }
 
