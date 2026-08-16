@@ -37,46 +37,7 @@
     --shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
     --feedfade: linear-gradient(to bottom, rgba(255,255,255,0), #ffffff);
   }
-  :root:not([data-theme="light"]) {
-    color-scheme: light;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) {
-      --bg: #0f0f0e;
-      --panel: #171716;
-      --border: rgba(255, 255, 255, 0.09);
-      --edge: rgba(255, 255, 255, 0.16);
-      --ink: #f0efec;
-      --ink-2: #a3a29e;
-      --ink-3: #6f6e6a;
-      --violet: #948af5;
-      --teal: #3cc4b6;
-      --amber: #edb35c;
-      --rose: #e876a0;
-      --green: #58b873;
-      --shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
-      --feedfade: linear-gradient(to bottom, rgba(23,23,22,0), #171716);
-      color-scheme: dark;
-    }
-  }
-  :root[data-theme="dark"] {
-    --bg: #0f0f0e;
-    --panel: #171716;
-    --border: rgba(255, 255, 255, 0.09);
-    --edge: rgba(255, 255, 255, 0.16);
-    --ink: #f0efec;
-    --ink-2: #a3a29e;
-    --ink-3: #6f6e6a;
-    --violet: #948af5;
-    --teal: #3cc4b6;
-    --amber: #edb35c;
-    --rose: #e876a0;
-    --green: #58b873;
-    --shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
-    --feedfade: linear-gradient(to bottom, rgba(23,23,22,0), #171716);
-    color-scheme: dark;
-  }
-
+  :root { color-scheme: light only; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
   body {
@@ -339,8 +300,8 @@
       <h1>The company that runs itself.</h1>
       <p class="sub">Bob the Busines staffs a software company with <strong>43 agents</strong>. They ship code, post to your audience, forecast revenue, watch your rivals, manage treasury, and answer support — while you watch from one screen.</p>
       <div class="ctas">
-        <a class="btn primary" href="https://buy.stripe.com/test_5kQ7sDfME0if2tO5Xu5wI00">Run your company — $9/mo</a>
-        <a class="btn ghost" href="http://localhost:5199/">Open the dashboard</a>
+        <a class="btn primary" href="https://buy.stripe.com/test_5kQ7sDfME0if2tO5Xu5wI00">Run your company — $20/mo</a>
+        <a class="btn ghost" href="dashboard/">Open the dashboard</a>
       </div>
     </div>
     <div class="feedpanel" aria-label="Live activity from Bob the Busines">
@@ -479,7 +440,7 @@
   <div class="wrap">
     <div class="plan">
       <div class="kicker">Subscriber plan</div>
-      <div class="price num">$9 <em>/ month</em></div>
+      <div class="price num">$20 <em>/ month</em></div>
       <ul>
         <li>The full eight-screen cockpit, live</li>
         <li>Agents wired to your repo, your audience, your books</li>
@@ -495,7 +456,7 @@
 
 <footer>
   <div class="wrap">
-    <span>Bob the Busines — a zero-human company experiment</span>
+    <span>Bob the Busines — a zero-human company experiment · <a href="terac/ship.html">ship review</a> · <a href="terac/trade.html">trade review</a> · <a href="terac/alloc.html">legal finances</a></span>
     <span class="mono">cockpit keys 1–8 · built by agents, watched by you</span>
   </div>
 </footer>
