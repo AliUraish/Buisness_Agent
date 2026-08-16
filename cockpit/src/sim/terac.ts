@@ -219,3 +219,31 @@ export async function hireAllocationReview(input: {
 export async function pollAllocationReview(jobId: string): Promise<Pick<TeracAllocationReview, 'verdict' | 'reason' | 'expert'>> {
   return api(`/allocations/${encodeURIComponent(jobId)}`)
 }
+
+export async function hireLegalReview(input: {
+  bankName: string
+  balance: number
+  alloc: { label: string; pct: number }[]
+  rationale: string
+  revenueToday: string
+}): Promise<TeracReview> {
+  try {
+    return await api<TeracReview>('/legal', { method: 'POST', body: JSON.stringify(input) }, 40000)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    return {
+      live: false,
+      jobId: '',
+      dashboardUrl: null,
+      quote: null,
+      expert: null,
+      title: 'Legal finances',
+      verdict: 'error',
+      reason: msg.slice(0, 180),
+    }
+  }
+}
+
+export async function pollLegalReview(jobId: string): Promise<Pick<TeracReview, 'verdict' | 'reason' | 'expert'>> {
+  return api(`/legal/${encodeURIComponent(jobId)}`)
+}
