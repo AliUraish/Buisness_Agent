@@ -1,6 +1,7 @@
 // Owns the Terac REST v2 hire. Keys stay here — the frontend never sees them.
 
 import { GITHUB_REPO, REVIEW_URL, STRIPE_PAYMENT_LINK, TERAC_API_KEY } from './env.ts'
+import { mcpListSubmissions } from './terac-mcp.ts'
 
 const BASE = 'https://terac.com/api/external/v2'
 
@@ -472,17 +473,29 @@ export async function hireTradeReview(input: TradeInput): Promise<TeracTradeRevi
   }
 }
 
-export async function pollTradeReview(jobId: string): Promise<Pick<TeracTradeReview, 'status' | 'confidence' | 'reason' | 'expert'>> {
-  let json: any
+async function listSubmissions(jobId: string): Promise<any[]> {
+  const mcpRows = await mcpListSubmissions(jobId)
   try {
-    json = await call(`/opportunities/${encodeURIComponent(jobId)}/submissions?limit=25`)
+    const json = await call(`/opportunities/${encodeURIComponent(jobId)}/submissions?limit=25`)
+    const rest = json?.data ?? []
+    if (mcpRows && mcpRows.length) return mcpRows
+    return rest
+  } catch (e) {
+    if (mcpRows) return mcpRows
+    throw e
+  }
+}
+
+export async function pollTradeReview(jobId: string): Promise<Pick<TeracTradeReview, 'status' | 'confidence' | 'reason' | 'expert'>> {
+  let rows: any[]
+  try {
+    rows = await listSubmissions(jobId)
   } catch (e) {
     if (e instanceof TeracHttpError && RETRYABLE.has(e.status)) {
       return { status: 'waiting', confidence: null, reason: 'Terac is busy — retrying shortly.', expert: null }
     }
     throw e
   }
-  const rows: any[] = json?.data ?? []
   const done = rows.find(
     (s) =>
       ['awaiting_review', 'approved', 'screen_passed'].includes(s.status) ||
@@ -509,16 +522,15 @@ export async function pollTradeReview(jobId: string): Promise<Pick<TeracTradeRev
 }
 
 export async function pollClaimReview(jobId: string): Promise<Pick<TeracReview, 'verdict' | 'reason' | 'expert'>> {
-  let json: any
+  let rows: any[]
   try {
-    json = await call(`/opportunities/${encodeURIComponent(jobId)}/submissions?limit=25`)
+    rows = await listSubmissions(jobId)
   } catch (e) {
     if (e instanceof TeracHttpError && RETRYABLE.has(e.status)) {
       return { verdict: 'waiting', reason: 'Terac is busy — retrying shortly.', expert: null }
     }
     throw e
   }
-  const rows: any[] = json?.data ?? []
   const done = rows.find(
     (s) => ['awaiting_review', 'approved', 'screen_passed'].includes(s.status) || hasVerdict(s),
   )
@@ -692,8 +704,7 @@ export async function hireAllocationReview(input: AllocationInput): Promise<Tera
 }
 
 export async function pollAllocationReview(jobId: string): Promise<Pick<TeracAllocationReview, 'verdict' | 'reason' | 'expert'>> {
-  const json = await call(`/opportunities/${encodeURIComponent(jobId)}/submissions?limit=25`)
-  const rows: any[] = json?.data ?? []
+  const rows: any[] = await listSubmissions(jobId)
   const done = rows.find((r) => ['awaiting_review', 'approved', 'screen_passed'].includes(r.status) || (r?.screening_answers ?? []).some((a: ScreeningAnswer) => a.key === 'verdict'))
   if (!done) return { verdict: 'waiting', reason: 'Waiting on a human reviewer.', expert: null }
   let answers: ScreeningAnswer[] = done.screening_answers ?? []
@@ -840,8 +851,7 @@ export async function hireLegalReview(input: LegalInput): Promise<TeracLegalRevi
 }
 
 export async function pollLegalReview(jobId: string): Promise<Pick<TeracLegalReview, 'verdict' | 'reason' | 'expert'>> {
-  const json = await call(`/opportunities/${encodeURIComponent(jobId)}/submissions?limit=25`)
-  const rows: any[] = json?.data ?? []
+  const rows: any[] = await listSubmissions(jobId)
   const done = rows.find(
     (r) => ['awaiting_review', 'approved', 'screen_passed'].includes(r.status) || (r?.screening_answers ?? []).some((a: ScreeningAnswer) => a.key === 'verdict'),
   )
@@ -982,16 +992,15 @@ export async function hireShipReview(input: ShipInput): Promise<TeracShipReview>
 }
 
 export async function pollShipReview(jobId: string): Promise<Pick<TeracShipReview, 'verdict' | 'reason' | 'expert'>> {
-  let json: any
+  let rows: any[]
   try {
-    json = await call(`/opportunities/${encodeURIComponent(jobId)}/submissions?limit=25`)
+    rows = await listSubmissions(jobId)
   } catch (e) {
     if (e instanceof TeracHttpError && RETRYABLE.has(e.status)) {
       return { verdict: 'waiting', reason: 'Terac is busy — retrying shortly.', expert: null }
     }
     throw e
   }
-  const rows: any[] = json?.data ?? []
   const done = rows.find(
     (s) => ['awaiting_review', 'approved', 'screen_passed'].includes(s.status) || hasShipVerdict(s),
   )
