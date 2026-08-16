@@ -49,6 +49,7 @@ function GithubBanner() {
       <div className="ship-inner">
         {g.live ? <span className="testmode live">GITHUB LIVE</span> : <span className="testmode off">GITHUB OFF</span>}
         {g.live && (g.canPush ? <span className="testmode live">CAN OPEN PRS</span> : <span className="testmode off">READ ONLY</span>)}
+        {s.teracMcp.live ? <span className="testmode live">TERAC MCP</span> : <span className="testmode off">TERAC MCP OFF</span>}
         <span className="ship-title">
           {g.live ? (
             <>

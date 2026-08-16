@@ -254,9 +254,11 @@ function DeskPanel() {
 
 // mirrors the audience Terac strip: hired human, stated confidence, receipts
 function TradeGateStrip({ gate }: { gate: TradeGate }) {
+  const s = useEngineTick()
   return (
     <div className="trade-gate">
       {gate.live ? <span className="testmode live">TERAC LIVE</span> : <span className="testmode off">TERAC OFF</span>}
+      {s.teracMcp.live ? <span className="testmode live">MCP</span> : <span className="testmode off">MCP OFF</span>}
       <span className="terac-kicker">Terac</span>
       {gate.status === 'hiring' && <span className="dim">opening the Terac form…</span>}
       {gate.status === 'waiting' && <span className="dim">holding the fill — waiting on the Terac form</span>}
