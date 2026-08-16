@@ -5,11 +5,12 @@
 
 import { AUDIENCE } from '../data/audience'
 import { mulberry32 } from './rng'
-import { fetchBars, fetchLatestPrices, submitPaperOrder, ORDERS_ENABLED } from './alpaca'
-import { hireAllocationReview, hireClaimReview, hireShipReview, hireTradeReview, pollAllocationReview, pollClaimReview, pollShipReview, pollTradeReview } from './terac'
+import { fetchBars, fetchLatestPrices, fetchPaperAccount, submitPaperOrder, submitPaperSell, shouldHarvest, ORDERS_ENABLED } from './alpaca'
+import { hireAllocationReview, hireClaimReview, hireLegalReview, hireShipReview, hireTradeReview, pollAllocationReview, pollClaimReview, pollLegalReview, pollShipReview, pollTradeReview } from './terac'
 import { refreshLinqStatus, sendLinqMessage, sendLinqOnboard } from './linq'
 import { fetchPaySummary, fetchStripeToday, TodayRevenue } from './pay'
-import { extractJson, fetchLlmStatus, llmComplete, LlmProvider, LlmStatus } from './llm'
+import { extractJson, fetchLlmStatus, llmComplete, rechargeLlmCredits, LlmProvider, LlmStatus } from './llm'
+import { blankCredits, CREDIT_PACK, CREDIT_PACK_USD, shouldBuyCredits, type CreditBook } from './credits'
 import { fetchDbStatus, journalEvent, loadJournal, loadState, putState } from './persist'
 import { fetchPerfloSummary } from './perflo'
 import { fetchResearchStatus, runResearch } from './research'
@@ -195,6 +196,13 @@ export interface ShipJob {
   featureId: string | null
 }
 
+export function teracVerifyLabel(job: Pick<ShipJob, 'gate' | 'pr'>): 'verified' | 'not-verified' | 'reviewing' | null {
+  if (job.gate.verdict === 'approved') return 'verified'
+  if (job.gate.status === 'hiring' || job.gate.status === 'waiting') return 'reviewing'
+  if (job.gate.verdict === 'rejected' || job.pr) return 'not-verified'
+  return null
+}
+
 // ── Investment (mode 7) ────────────────────────────────────────
 export interface Vote {
   agent: string
@@ -247,7 +255,7 @@ export interface AssetPred {
 // trade before the money moves — mirrors the audience claim-review gate.
 // 'expert' = a Terac expert answered; 'desk' = honest fallback confidence
 // derived from agent agreement (Terac off / not answered yet).
-export type TradeGateStatus = 'idle' | 'hiring' | 'waiting' | 'expert' | 'desk'
+export type TradeGateStatus = 'idle' | 'hiring' | 'waiting' | 'expert' | 'desk' | 'error'
 
 export interface TradeGate {
   status: TradeGateStatus
@@ -280,6 +288,19 @@ export interface PositionRec {
   qty: number
   cost: number // USD in at entry
   entry: number // entry price
+  orderId?: string | null
+}
+
+export function deskPnl(
+  positions: Pick<PositionRec, 'qty' | 'cost' | 'assetId'>[],
+  assets: Pick<Asset, 'id' | 'price'>[],
+  realized: number,
+): number {
+  const open = positions.reduce((sum, p) => {
+    const a = assets.find((x) => x.id === p.assetId)
+    return sum + (a ? p.qty * a.price - p.cost : 0)
+  }, 0)
+  return realized + open
 }
 
 // ── Support (mode 8) — customer service over Linq messaging ────
@@ -474,6 +495,9 @@ export interface EngineState {
   positions: PositionRec[]
   marketFeed: 'connecting' | 'live' | 'sim'
   ordersLive: boolean
+  tradingRevenue: number
+  unrealizedPnl: number
+  paperEquity: number | null
   tickets: Ticket[]
   linqLive: boolean
   paymentLink: string | null
@@ -482,9 +506,11 @@ export interface EngineState {
   marketingQueue: MarketingNeed[]
   marketingPick: string | null
   bank: Bank
+  legalFinance: TeracJob
   funding: Funding
   railsLive: { stripe: RailLive; whop: RailLive }
   llm: LlmStatus | null
+  credits: CreditBook
   dbLive: boolean
   stripeToday: TodayRevenue | null
 }
@@ -545,6 +571,7 @@ export const AGENT_DEPT: Record<string, Dept> = {
   'Support QA': 'marketing',
   'Bug Checker': 'product',
   'CFO Agent': 'finance',
+  'Credit Buyer': 'finance',
   'Terac Liaison': 'alerts',
   Direct: 'marketing',
   Receipts: 'marketing',
@@ -1175,7 +1202,7 @@ class Engine {
     forecasters: [],
     forecastAt: 0,
     forecastNote: { text: '', scheduled: null, at: 0 },
-    railTotals: LIVE_ONLY ? { Stripe: 0, Whop: 0 } : { Stripe: 2455, Whop: 1386 },
+    railTotals: LIVE_ONLY ? { Stripe: 0, Whop: 0, Alpaca: 0 } : { Stripe: 2455, Whop: 1386, Alpaca: 0 },
     repo: LIVE_ONLY
       ? { commits: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], openPRs: 0, lastScanAt: Date.now() }
       : { commits: [3, 5, 2, 6, 4, 8, 5, 7, 4, 6, 9, 5, 7, 6], openPRs: 4, lastScanAt: Date.now() },
@@ -1250,6 +1277,9 @@ class Engine {
     positions: LIVE_ONLY ? [] : MARKET.positions,
     marketFeed: 'connecting',
     ordersLive: ORDERS_ENABLED,
+    tradingRevenue: 0,
+    unrealizedPnl: 0,
+    paperEquity: null,
     tickets: LIVE_ONLY ? [] : seedSupport(),
     linqLive: false,
     paymentLink: null,
@@ -1279,10 +1309,12 @@ class Engine {
     },
     stripeToday: null,
     llm: null,
+    credits: blankCredits(),
     dbLive: false,
     github: blankGithubScan(),
     marketingQueue: [],
     marketingPick: null,
+    legalFinance: blankTerac(),
   }
 
   private listeners = new Set<Listener>()
@@ -1302,6 +1334,7 @@ class Engine {
   private lastExpertReading: { confidence: number; expert: string | null; note: string; at: number } | null = null
   private pendingPublish: { feature: string; camp: number; winner: DraftPost; tally: number } | null = null
   private shipBusy = false
+  private deskBusy = false
   private teracShipBlocked = false
 
   subscribe = (fn: Listener): (() => void) => {
@@ -1481,6 +1514,7 @@ class Engine {
       st8.loops = Number(k.counters.loops) || st8.loops
       st8.campaigns = Number(k.counters.campaigns) || st8.campaigns
       st8.sessionCampaigns = Array.isArray(k.counters.sessionCampaigns) ? k.counters.sessionCampaigns : []
+      if (Number.isFinite(k.counters.tradingRevenue)) st8.tradingRevenue = Number(k.counters.tradingRevenue)
     }
     // restored records carry old ids — keep new ids clear of them
     const maxId = Math.max(
@@ -1510,7 +1544,7 @@ class Engine {
     putState('posts', s.posts)
     putState('bugChecks', s.bugChecks)
     putState('capabilities', s.capabilities)
-    putState('counters', { loops: s.loops, campaigns: s.campaigns, sessionCampaigns: s.sessionCampaigns })
+    putState('counters', { loops: s.loops, campaigns: s.campaigns, sessionCampaigns: s.sessionCampaigns, tradingRevenue: s.tradingRevenue })
   }
 
   start() {
@@ -1538,10 +1572,8 @@ class Engine {
       this.state.spark[this.state.spark.length - 1] = this.state.mrr
     }
 
-    // the finance page keeps its original look: forecast ensemble + report
-    // run in every mode (the modelled view), anchored at the model MRR
-    this.runForecast()
-    {
+    if (!LIVE_ONLY) {
+      this.runForecast()
       const p50 = this.forecastP50()
       this.state.forecastNote = { text: this.reportText(p50), scheduled: null, at: Date.now() }
     }
@@ -1582,7 +1614,9 @@ class Engine {
               if (a.history.length > 120) a.history.shift()
               a.changePct = (a.price / a.history[0] - 1) * 100
             }
+            this.applyRevenue()
             this.emit()
+            void this.harvestPositions()
           })
           .catch(() => {
             pollFails++
@@ -1602,7 +1636,9 @@ class Engine {
           if (a.history.length > 120) a.history.shift()
           a.changePct = (a.price / a.history[0] - 1) * 100
         }
+        this.applyRevenue()
         this.emit()
+        void this.harvestPositions()
       }
     }, 2500)
     this.timers.push(ticker as unknown as ReturnType<typeof setTimeout>)
@@ -1611,8 +1647,9 @@ class Engine {
     if (!LIVE_ONLY) {
       this.runLoop()
       this.runCompetitionLoop()
-      this.runInvestmentLoop()
     }
+    this.runInvestmentLoop()
+    this.runCreditLoop()
 
     // agent brains: if any LLM provider is configured, the desk and CFO run
     // for real — actual model calls, actual ledger rows
@@ -1622,12 +1659,12 @@ class Engine {
         const on = [st.anthropic && 'Anthropic', st.openai && 'OpenAI', st.gemini && 'Gemini'].filter(Boolean).join(' · ')
         this.log('ceo', 'Orchestrator', `Agent brains online — ${on} · session cap ${st.callsMax} calls`, ['real LLM'])
         if (LIVE_ONLY) {
-          this.runInvestmentLoop()
           this.runBankLoop()
           void this.planAllocation()
+          void this.runRealForecast()
         }
       } else if (LIVE_ONLY) {
-        this.log('ceo', 'Orchestrator', 'No LLM keys configured — agent reasoning paused', ['llm off'])
+        this.log('ceo', 'Orchestrator', 'No LLM keys configured — desk still paper-trades on the formula book', ['llm off'])
       }
       this.emit()
     })
@@ -1660,6 +1697,63 @@ class Engine {
     void this.pollStripeToday()
     const todayPoll = setInterval(() => void this.pollStripeToday(), 60_000)
     this.timers.push(todayPoll as unknown as ReturnType<typeof setTimeout>)
+  }
+
+  // ── Real forecast ensemble: five persona seats on three real models ──
+  private async runRealForecast() {
+    const seats: { model: string; mono: string; persona: string; provider: LlmProvider }[] = [
+      { model: 'GPT-5', mono: 'G', persona: 'Bull', provider: 'openai' },
+      { model: 'Gemini', mono: 'Ge', persona: 'Bear', provider: 'gemini' },
+      { model: 'Claude', mono: 'C', persona: 'Churn-hawk', provider: 'anthropic' },
+      { model: 'Claude', mono: 'C', persona: 'Base-rate', provider: 'anthropic' },
+      { model: 'GPT-5', mono: 'G', persona: 'Momentum', provider: 'openai' },
+    ]
+    const rev = this.state.stripeToday
+    const facts =
+      `Company: Business_Agent, an autonomous AI company selling the AgentBasis python SDK (AI agent observability). ` +
+      `Launched today. Real Stripe revenue today: $${((rev?.grossCents ?? 0) / 100).toFixed(2)} across ${rev?.count ?? 0} payments (${rev?.mode ?? 'off'} mode). ` +
+      `LLM operating cost today: $${this.state.spendToday.toFixed(2)}. Marketing posts + GitHub shipping are live.`
+    const results: Forecaster[] = []
+    for (const seat of seats) {
+      const text = await this.agentBrain(
+        `Forecaster · ${seat.model} ${seat.persona}`,
+        seat.provider,
+        `You are the ${seat.persona} seat on a revenue forecasting ensemble. Given real company facts, predict total revenue (USD) for the NEXT 30 DAYS. Reply with ONLY JSON: {"p50": <integer dollars>, "confidence": <0.1-0.95>, "rationale": "<one short sentence>"}`,
+        facts,
+        110,
+      )
+      const parsed = text ? extractJson(text) : null
+      const p50 = parsed ? Math.round(Number(parsed.p50)) : NaN
+      if (Number.isFinite(p50) && p50 >= 0 && p50 < 10_000_000) {
+        results.push({
+          model: seat.model,
+          mono: seat.mono,
+          persona: seat.persona,
+          p50,
+          confidence: Math.min(Math.max(Number(parsed.confidence) || 0.5, 0.1), 0.95),
+          rationale: String(parsed.rationale ?? '').slice(0, 120),
+        })
+        this.state.forecasters = [...results]
+        this.emit()
+      }
+    }
+    if (results.length >= 3) {
+      const p50 = this.forecastP50()
+      const lo = Math.min(...results.map((f) => f.p50))
+      const hi = Math.max(...results.map((f) => f.p50))
+      this.state.forecastNote = {
+        text:
+          `The ensemble of ${results.length} real models projects $${p50.toLocaleString()} revenue over the next 30 days, ` +
+          `with estimates spanning $${lo.toLocaleString()}–$${hi.toLocaleString()}. ` +
+          `Grounded in real numbers: $${((rev?.grossCents ?? 0) / 100).toFixed(2)} revenue today, ` +
+          `$${this.state.spendToday.toFixed(2)} operating cost, live GitHub shipping and campaigns. ` +
+          `Every prediction and rationale above came from an actual model call.`,
+        scheduled: null,
+        at: Date.now(),
+      }
+      this.log('finance', 'Forecast Ensemble', `Real 30d forecast: $${p50.toLocaleString()} (${results.length} models, $${lo.toLocaleString()}–$${hi.toLocaleString()})`, ['real LLM'])
+    }
+    this.emit()
   }
 
   // ── Competition research: real Perplexity sweeps on real rivals ──
@@ -1788,7 +1882,7 @@ class Engine {
     if (!today) return
     const prev = this.state.stripeToday
     this.state.stripeToday = today
-    if (LIVE_ONLY && today.live) this.state.mrr = Math.round(today.grossCents / 100)
+    if (LIVE_ONLY && today.live) this.applyRevenue()
     if (today.live && !prev?.live) {
       this.log(
         'finance',
@@ -1885,7 +1979,7 @@ class Engine {
       this.log('finance', 'CFO Agent', 'Division proposal failed to parse — keeping the baseline split', ['fallback'])
     }
     this.emit()
-    await this.reviewAllocation()
+    // Terac legal-finance review is a Finance-mode button, not automatic.
   }
 
   private async reviewAllocation() {
@@ -1977,6 +2071,70 @@ class Engine {
     }
     if (f.source === 'perflo') f.perfloSpent += amount
     else f.stripeSpent += amount
+  }
+
+  private creditBusy = false
+
+  private spendCredit(agent: string, n = 1) {
+    this.state.credits.balance = Math.max(0, this.state.credits.balance - n)
+    if (shouldBuyCredits(this.state.credits)) void this.buyCredits(agent)
+    this.emit()
+  }
+
+  private async buyCredits(askedBy: string) {
+    if (this.creditBusy || !shouldBuyCredits(this.state.credits)) return
+    this.creditBusy = true
+    try {
+      const growth = this.state.treasury.alloc.find((a) => a.label === 'Growth')
+      const cost = CREDIT_PACK_USD
+      if (growth && growth.amount >= cost) {
+        growth.amount -= cost
+        this.state.treasury.cash -= cost
+      }
+      this.chargeCost(cost)
+      const live = await rechargeLlmCredits(CREDIT_PACK)
+      this.state.credits.balance += CREDIT_PACK
+      this.state.credits.bought++
+      this.state.credits.lastBuyAt = Date.now()
+      this.state.credits.lastPack = CREDIT_PACK
+      this.state.credits.lastCost = cost
+      this.state.credits.lastBuyer = 'Credit Buyer'
+      this.state.transactions.push({
+        id: this.nextId++,
+        at: Date.now(),
+        rail: 'Stripe',
+        plan: 'credit pack',
+        amount: -cost,
+        balance: this.state.mrr,
+      })
+      if (this.state.transactions.length > 40) this.state.transactions.shift()
+      this.log(
+        'finance',
+        'Credit Buyer',
+        `Bought ${CREDIT_PACK} credits for $${cost} (mock pack) — asked by ${askedBy.split(' · ')[0]}`,
+        [live?.ok ? 'backend recharged' : 'local pack', `${this.state.credits.balance} left`],
+        `-$${cost}`,
+      )
+      if (this.state.llm && live?.ok) {
+        this.state.llm.callsMax += live.added
+        if (this.state.llm.remaining != null) this.state.llm.remaining += live.added
+      }
+      this.emit()
+    } finally {
+      this.creditBusy = false
+    }
+  }
+
+  private async runCreditLoop() {
+    await this.sleep(8000)
+    for (;;) {
+      try {
+        if (shouldBuyCredits(this.state.credits)) await this.buyCredits('Credit Buyer')
+      } catch (e) {
+        console.error('[engine] credit buy failed:', e)
+      }
+      await this.sleep(20000)
+    }
   }
 
   private async runBankLoop() {
@@ -2107,6 +2265,89 @@ class Engine {
     }
     this.setNode('support', 'idle')
     this.emit()
+  }
+
+  // Finance-mode button: hire a Terac human for legal finances. The page is /legal.
+  hireLegalFinance = async (): Promise<void> => {
+    const job = this.state.legalFinance
+    if (job.status === 'hiring' || job.status === 'waiting') return
+    if (this.teracHiresUsed >= this.TERAC_HIRE_BUDGET) {
+      job.status = 'error'
+      job.verdict = 'Session hire budget (1) already used'
+      this.log('alerts', 'Terac Liaison', 'Legal-finance hire skipped — budget already used', ['budget'])
+      this.emit()
+      return
+    }
+    this.teracHiresUsed++
+    const bank = this.state.bank
+    const rev = this.state.stripeToday
+    job.status = 'hiring'
+    job.verdict = null
+    job.jobId = null
+    job.expert = null
+    job.dashboardUrl = null
+    job.title = 'Legal finances'
+    this.setNode('terac', 'acting', 'hiring legal-finance reviewer…')
+    this.log('alerts', 'Terac Liaison', 'Hiring a human to review legal finances', ['terac.com', '/legal'])
+    this.emit()
+    try {
+      const hired = await hireLegalReview({
+        bankName: bank.name,
+        balance: bank.balance,
+        alloc: bank.alloc,
+        rationale: bank.note ?? 'CFO division',
+        revenueToday: rev?.live ? `$${(rev.grossCents / 100).toFixed(2)} Stripe ${rev.mode}` : 'Stripe off',
+      })
+      job.live = hired.live
+      job.jobId = hired.jobId || null
+      job.quote = hired.quote
+      job.dashboardUrl = hired.dashboardUrl
+      job.verdict = hired.reason
+      if (hired.verdict === 'error' || !hired.jobId) {
+        if (/412|401|insufficient balance|invalid or expired/i.test(hired.reason)) this.teracHiresUsed--
+        job.status = 'error'
+        this.log('alerts', 'Terac Liaison', `Legal-finance hire failed — ${hired.reason.slice(0, 100)}`, ['no hire'])
+        this.setNode('terac', 'idle')
+        this.emit()
+        return
+      }
+      job.status = 'waiting'
+      this.log('alerts', 'Terac Liaison', `Legal finances sent to Terac — waiting on a human`, [hired.jobId, 'live'])
+      this.setNode('terac', 'acting', 'waiting on legal-finance reviewer…')
+      this.emit()
+      let polls = 0
+      const t = setInterval(() => {
+        polls++
+        if (polls > 20 || !job.jobId || job.status !== 'waiting') {
+          clearInterval(t)
+          return
+        }
+        void pollLegalReview(job.jobId)
+          .then((v) => {
+            if (v.verdict === 'waiting') return
+            job.expert = v.expert
+            job.verdict = v.reason
+            job.status = v.verdict === 'approved' ? 'approved' : 'revised'
+            this.log(
+              'alerts',
+              'Terac Liaison',
+              `${v.expert ?? 'Human'} ${v.verdict === 'approved' ? 'approved' : 'flagged'} legal finances — ${v.reason.slice(0, 90)}`,
+              [v.verdict],
+            )
+            this.setNode('terac', 'idle')
+            clearInterval(t)
+            this.emit()
+          })
+          .catch(() => undefined)
+      }, 12_000)
+      this.timers.push(t as unknown as ReturnType<typeof setTimeout>)
+    } catch (e) {
+      job.status = 'error'
+      job.verdict = (e instanceof Error ? e.message : String(e)).slice(0, 180)
+      this.log('alerts', 'Terac Liaison', `Legal-finance hire failed — ${job.verdict}`, ['error'])
+      this.setNode('terac', 'idle')
+      this.emit()
+    }
   }
 
   // ── Support: inbound texts triaged, drafted, QA'd, and answered ──
@@ -2548,6 +2789,7 @@ class Engine {
       await S(1400)
       scout.status = 'done'
       scout.note = `${job.rival} has ${job.feature}`
+      if (LIVE_ONLY) this.spendCredit('Changelog Scout')
 
       gap.status = 'working'
       this.setNode('risk', 'acting', 'diffing matrix…')
@@ -2556,6 +2798,7 @@ class Engine {
       await S(1600)
       gap.status = 'done'
       gap.note = `we do not have ${job.feature}`
+      if (LIVE_ONLY) this.spendCredit('Gap Analyst')
 
       writer.status = 'working'
       this.setNode('manifest', 'acting', 'writing brief…')
@@ -2564,6 +2807,7 @@ class Engine {
       await S(1500)
       writer.status = 'done'
       writer.note = 'brief forwarded to product'
+      if (LIVE_ONLY) this.spendCredit('Brief Writer')
       job.stage = 'briefed'
       this.log('alerts', 'Brief Writer', `Forwarded to product: build ${job.feature}`, [job.rival, 'brief'])
       this.setNode('risk', 'idle')
@@ -2575,7 +2819,12 @@ class Engine {
       if (!job.pr) return
       if (SHIP_TERAC_ARMED) {
         await this.runVerifyGate(job)
-        if (job.gate.verdict !== 'approved') return
+        if (job.gate.verdict !== 'approved') {
+          job.stage = 'pr-open'
+          this.ensureShipFeature(job)
+          this.emit()
+          return
+        }
         const merged = await mergeGithubPr(job.pr.number)
         if (!merged.merged) {
           job.stage = 'pr-open'
@@ -2678,9 +2927,15 @@ class Engine {
       existing.status = job.stage === 'shipped' || pr.merged ? 'shipped' : 'progress'
       existing.summary = job.summary
       existing.file = pr.file
-      existing.chips = pr.merged
-        ? [`PR #${pr.number}`, pr.file, pr.sha]
-        : [`PR #${pr.number} · draft`, `branch: ${pr.branch}`, pr.sha]
+      existing.chips = [
+        pr.merged ? `PR #${pr.number}` : `PR #${pr.number} · draft`,
+        ...(pr.merged ? [] : [`branch: ${pr.branch}`]),
+        pr.sha,
+        ...(() => {
+          const v = teracVerifyLabel(job)
+          return v === 'verified' ? ['Terac verified'] : v === 'reviewing' ? ['Terac reviewing'] : ['Terac not verified']
+        })(),
+      ]
       if (existing.status === 'shipped' && !existing.shippedAt) existing.shippedAt = Date.now()
       job.featureId = existing.id
       return
@@ -2690,7 +2945,7 @@ class Engine {
       name: job.feature,
       summary: job.summary,
       status: 'progress',
-      chips: [`PR #${pr.number} · draft`, `branch: ${pr.branch}`, pr.sha],
+      chips: [`PR #${pr.number} · draft`, `branch: ${pr.branch}`, pr.sha, 'Terac not verified'],
       file: pr.file,
     }
     this.state.features.push(f)
@@ -2729,13 +2984,14 @@ class Engine {
     job.gate.reason = hired.reason
 
     if (hired.verdict === 'error') {
-      job.stage = 'blocked'
+      job.stage = 'pr-open'
       job.gate.status = 'error'
-      this.teracShipBlocked = true
-      this.log('alerts', 'Terac Liaison', `No verifier for PR #${pr.number} — ${hired.reason.slice(0, 90)}`, [
+      job.gate.verdict = null
+      this.log('alerts', 'Terac Liaison', `PR #${pr.number} opened — Terac not verified (${hired.reason.slice(0, 80)})`, [
         hired.live ? 'hire failed' : 'needs key',
       ])
-      this.patchIntel(job, `PR #${pr.number} blocked — Terac did not hire`)
+      this.patchIntel(job, `PR #${pr.number} open — Terac not verified`)
+      this.ensureShipFeature(job)
       this.setNode('terac', 'idle')
       this.emit()
       return
@@ -2753,24 +3009,27 @@ class Engine {
     if (v.verdict === 'approved') {
       job.gate.status = 'approved'
       job.gate.verdict = 'approved'
-      this.log('alerts', 'Terac Liaison', `${v.expert ?? 'Terac expert'}: research → PR holds — ${v.reason.slice(0, 100)}`, [
-        'verify',
+      this.log('alerts', 'Terac Liaison', `${v.expert ?? 'Terac expert'}: Terac verified PR #${pr.number} — ${v.reason.slice(0, 100)}`, [
+        'verified',
       ])
-      this.patchIntel(job, `PR #${pr.number} verified — shipping`)
+      this.patchIntel(job, `PR #${pr.number} Terac verified — shipping`)
+      this.ensureShipFeature(job)
     } else if (v.verdict === 'rejected') {
       job.gate.status = 'revised'
       job.gate.verdict = 'rejected'
-      job.stage = 'rejected'
-      this.log('alerts', 'Terac Liaison', `${v.expert ?? 'Terac expert'}: research → PR rejected — ${v.reason.slice(0, 100)}`, [
-        'reject',
+      job.stage = 'pr-open'
+      this.log('alerts', 'Terac Liaison', `${v.expert ?? 'Terac expert'}: Terac not verified PR #${pr.number} — ${v.reason.slice(0, 100)}`, [
+        'not-verified',
       ])
-      this.patchIntel(job, `PR #${pr.number} rejected by Terac`)
+      this.patchIntel(job, `PR #${pr.number} Terac not verified`)
+      this.ensureShipFeature(job)
     } else {
-      job.stage = 'blocked'
+      job.stage = 'pr-open'
       job.gate.status = 'error'
       job.gate.reason = v.reason
-      this.log('alerts', 'Terac Liaison', v.reason, ['error'])
-      this.patchIntel(job, `PR #${pr.number} blocked — waiting on Terac`)
+      this.log('alerts', 'Terac Liaison', `PR #${pr.number} still open — Terac not verified. ${v.reason}`, ['error'])
+      this.patchIntel(job, `PR #${pr.number} Terac not verified`)
+      this.ensureShipFeature(job)
     }
     this.setNode('terac', 'idle')
     this.emit()
@@ -2860,6 +3119,18 @@ class Engine {
     }
   }
 
+  shipNext = (): boolean => {
+    if (this.shipBusy) return false
+    if (this.shipsThisSession >= MAX_SDK_SHIPS) return false
+    const next = SDK_SHIPS.find((s) => !this.shipCovers(s.id))
+    if (!next) return false
+    const job = this.openSdkShipJob(next)
+    void this.runShipPipeline(job).then(() => {
+      if (job.pr?.number || job.stage === 'shipped') this.shipsThisSession++
+    })
+    return true
+  }
+
   private async waitForShipVerdict(jobId: string): Promise<{
     verdict: 'approved' | 'rejected' | 'waiting' | 'error'
     reason: string
@@ -2894,6 +3165,7 @@ class Engine {
     if (this.state.llmCalls.length > 60) this.state.llmCalls.shift()
     this.state.spendToday += r.costUsd
     this.chargeCost(r.costUsd)
+    this.spendCredit(agent)
     this.emit()
   }
 
@@ -2962,6 +3234,7 @@ class Engine {
         `Connected to Alpaca crypto feed — live BTC · ETH · SOL · DOGE · AVAX${ORDERS_ENABLED ? ' · paper orders armed' : ''}`,
         ['data.alpaca.markets'],
       )
+      if (ORDERS_ENABLED) void this.syncPaperAccount()
     } catch {
       this.state.marketFeed = 'sim'
       this.log('finance', 'Market Desk', 'Alpaca feed unreachable — falling back to simulated prices')
@@ -2989,15 +3262,14 @@ class Engine {
 
   // ── Investment: five desk agents predict, rank, and deploy capital ──
   private async runInvestmentLoop() {
-    await this.sleep(14000)
+    await this.sleep(6000)
     for (;;) {
       try {
         await this.marketRound()
       } catch (e) {
         console.error('[engine] market round failed, continuing:', e)
       }
-      // real model calls run on a 5-minute cadence; sim can churn faster
-      await this.sleep(LIVE_ONLY ? 300_000 : 32000)
+      await this.sleep(45000)
     }
   }
 
@@ -3037,10 +3309,9 @@ class Engine {
         gate.expert = prior.expert
         gate.note = `${prior.note} · expert reading from ${mins}m ago — one hire per session`
       } else {
-        const desk = this.deskConfidence(round)
-        gate.status = 'desk'
-        gate.confidence = desk.confidence
-        gate.note = `${desk.note} · one Terac hire per session already used`
+        gate.status = 'error'
+        gate.confidence = null
+        gate.note = 'No Terac form filled this session — holding fills'
       }
       this.emit()
       return
@@ -3079,65 +3350,61 @@ class Engine {
       gate.dashboardUrl = hired.dashboardUrl
 
       if (hired.status === 'error') {
-        const desk = this.deskConfidence(round)
-        gate.status = 'desk'
-        gate.confidence = desk.confidence
-        gate.note = `${desk.note} · ${hired.reason.startsWith('Terac') ? '' : 'Terac: '}${hired.reason.slice(0, 90)}`
-        this.log('alerts', 'Terac Liaison', `No expert — desk consensus confidence ${desk.confidence}%. ${hired.reason.slice(0, 90)}`, [gate.live ? 'hire failed' : 'needs key'])
+        gate.status = 'error'
+        gate.confidence = null
+        gate.note = hired.reason
+        this.log('alerts', 'Terac Liaison', `No Terac form — holding the ${winAsset.symbol} fill. ${hired.reason.slice(0, 90)}`, [
+          hired.live ? 'hire failed' : 'needs key',
+        ])
         this.setNode('terac', 'idle')
         this.emit()
         return
       }
 
       gate.status = 'waiting'
-      this.log('alerts', 'Terac Liaison', `Opportunity live — waiting on expert confidence for ${winAsset.symbol}`, [hired.jobId, 'live'])
-      this.setNode('terac', 'acting', 'waiting on expert…')
+      this.log('alerts', 'Terac Liaison', `Opportunity live — waiting on the Terac form for ${winAsset.symbol}`, [hired.jobId, 'live'])
+      this.setNode('terac', 'acting', 'waiting on Terac form…')
       this.emit()
 
-      // give the expert ~30s with a handful of polls; the fill won't wait forever
-      for (let i = 0; i < 4; i++) {
-        await this.sleep(8000)
-        try {
-          const v = await pollTradeReview(hired.jobId)
-          if (v.status === 'done') {
-            if (v.confidence != null) {
-              gate.status = 'expert'
-              gate.confidence = v.confidence
-              gate.expert = v.expert
-              gate.note = v.reason
-              this.lastExpertReading = { confidence: v.confidence, expert: v.expert, note: v.reason, at: Date.now() }
-              this.log('alerts', 'Terac Liaison', `${v.expert ?? 'Terac expert'}: ${v.confidence}% confident — ${v.reason.slice(0, 100)}`, ['expert'])
-            } else {
-              const desk = this.deskConfidence(round)
-              gate.status = 'desk'
-              gate.confidence = desk.confidence
-              gate.note = `${desk.note} · expert answered without a confidence bucket`
-            }
-            this.setNode('terac', 'idle')
-            this.emit()
-            return
-          }
-        } catch (e) {
-          console.error('[terac] trade poll failed:', e)
-        }
+      const v = await this.waitForTradeVerdict(hired.jobId)
+      if (v.status === 'done' && v.confidence != null) {
+        gate.status = 'expert'
+        gate.confidence = v.confidence
+        gate.expert = v.expert
+        gate.note = v.reason
+        this.lastExpertReading = { confidence: v.confidence, expert: v.expert, note: v.reason, at: Date.now() }
+        this.log('alerts', 'Terac Liaison', `${v.expert ?? 'Terac expert'} filled the form — ${v.confidence}%: ${v.reason.slice(0, 100)}`, ['form'])
+      } else {
+        gate.status = 'error'
+        gate.note = v.reason
+        this.log('alerts', 'Terac Liaison', `Terac form incomplete — holding the fill. ${v.reason.slice(0, 90)}`, ['error'])
       }
-
-      // expert still out — deploy on desk consensus, keep polling in background
-      const desk = this.deskConfidence(round)
-      gate.confidence = desk.confidence
-      gate.note = `${desk.note} · expert still reviewing`
-      this.log('alerts', 'Terac Liaison', `Expert still reviewing — deploying on desk consensus ${desk.confidence}%`, [gate.jobId ?? '', 'waiting'])
-      this.startTradePoller(round)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      const desk = this.deskConfidence(round)
-      gate.status = 'desk'
-      gate.confidence = desk.confidence
-      gate.note = `${desk.note} · hire failed: ${msg.slice(0, 90)}`
-      this.log('alerts', 'Terac Liaison', `Hire failed — desk consensus confidence ${desk.confidence}%`, ['error'])
+      gate.status = 'error'
+      gate.note = msg.slice(0, 90)
+      this.log('alerts', 'Terac Liaison', `Hire failed — holding the fill. ${msg.slice(0, 90)}`, ['error'])
     }
     this.setNode('terac', 'idle')
     this.emit()
+  }
+
+  private async waitForTradeVerdict(jobId: string): Promise<{
+    status: 'done' | 'waiting' | 'error'
+    confidence: number | null
+    reason: string
+    expert: string | null
+  }> {
+    // The human is the gate. Poll until they submit the form; do not fill early.
+    for (;;) {
+      await this.sleep(12_000)
+      try {
+        const v = await pollTradeReview(jobId)
+        if (v.status !== 'waiting') return v
+      } catch (e) {
+        console.error('[engine] trade poll failed:', e)
+      }
+    }
   }
 
   private startTradePoller(round: MarketRound) {
@@ -3171,6 +3438,9 @@ class Engine {
   }
 
   private async marketRound() {
+    if (this.deskBusy) return
+    this.deskBusy = true
+    try {
     const S = this.sleep.bind(this)
     const round: MarketRound = {
       id: this.nextId++,
@@ -3178,7 +3448,7 @@ class Engine {
       preds: COMMITTEE.map((c) => ({ agent: c.agent, mono: c.mono, persona: c.persona, roi: null })),
       consensus: null,
       winner: null,
-      amount: [250, 400, 500, 600][Math.floor(Math.random() * 4)],
+      amount: [150, 200, 250, 300][Math.floor(Math.random() * 4)],
       status: 'predicting',
       orderId: null,
       entryPrice: null,
@@ -3202,9 +3472,9 @@ class Engine {
       .map((a) => `${a.symbol}: $${a.price.toPrecision(6)} · trailing-window change ${a.changePct.toFixed(2)}% · recent momentum ${this.momentum(a).toFixed(2)}%`)
       .join('\n')
     for (const pred of round.preds) {
-      await S(LIVE_ONLY ? 800 : 2000)
+      await S(LIVE_ONLY ? 280 : 2000)
       let real: Record<string, number> | null = null
-      if (this.llmAvailable()) {
+      if (!LIVE_ONLY && this.llmAvailable()) {
         const text = await this.agentBrain(
           `Market Desk · ${pred.agent}`,
           DESK_PROVIDER[pred.agent] ?? 'anthropic',
@@ -3232,6 +3502,7 @@ class Engine {
           }),
         )
         this.llm('Market Desk', 'Anthropic', 'claude-haiku-4-5', 0.007)
+        if (LIVE_ONLY) this.spendCredit(`Market Desk · ${pred.agent}`)
       }
       this.emit()
     }
@@ -3254,9 +3525,16 @@ class Engine {
     this.emit()
     await S(1800)
 
-    // Terac gate: hire a human crypto expert to state confidence in the
-    // trade before deploying — same shape as the audience claim-review gate
     await this.runTradeGate(round, winAsset)
+    const conf = round.terac.confidence
+    if (round.terac.status !== 'expert') {
+      this.log('finance', 'Market Desk', `Held ${winAsset.symbol} — waiting on the Terac form`, [round.terac.note ?? 'no form'])
+      return
+    }
+    if (conf == null || conf < 50) {
+      this.log('finance', 'Market Desk', `Terac form filled — ${conf ?? 0}% confidence, skipping the fill`, ['low'])
+      return
+    }
 
     // deploy into the top-ranked asset — allocation moves Growth → Crypto,
     // so treasury allocations still sum exactly to cash
@@ -3295,11 +3573,12 @@ class Engine {
       qty: amount / round.entryPrice,
       cost: amount,
       entry: round.entryPrice,
+      orderId: round.orderId,
     })
     if (this.state.positions.length > 12) this.state.positions.shift()
     const confStr =
       round.terac.confidence != null
-        ? ` · confidence ${round.terac.confidence}% (${round.terac.status === 'expert' ? 'Terac expert' : 'desk consensus'})`
+        ? ` · confidence ${round.terac.confidence}% (${round.terac.status === 'expert' ? 'Terac form' : 'prior form'})`
         : ''
     this.log(
       'finance',
@@ -3307,7 +3586,101 @@ class Engine {
       `Filled — BUY $${amount} ${winAsset.symbol} @ $${round.entryPrice.toLocaleString(undefined, { maximumFractionDigits: round.entryPrice < 1 ? 4 : 2 })}${confStr}`,
       [round.orderId, fillChip],
     )
+    void this.syncPaperAccount()
     this.emit()
+    } finally {
+      this.deskBusy = false
+    }
+  }
+
+  private applyRevenue() {
+    const mark = deskPnl(this.state.positions, this.state.assets, this.state.tradingRevenue)
+    this.state.unrealizedPnl = mark - this.state.tradingRevenue
+    const desk = Math.max(0, mark)
+    this.state.railTotals.Alpaca = Math.round(desk)
+    if (!LIVE_ONLY) return
+    const stripe = this.state.stripeToday?.live ? Math.round(this.state.stripeToday.grossCents / 100) : 0
+    const next = stripe + Math.round(desk)
+    if (next !== this.state.mrr) {
+      this.state.spark.push(next)
+      if (this.state.spark.length > 60) this.state.spark.shift()
+    }
+    this.state.mrr = next
+  }
+
+  private bookRealized(realized: number, label: string, chips: string[]) {
+    this.state.tradingRevenue += realized
+    this.state.treasury.cash += realized
+    const growth = this.state.treasury.alloc.find((a) => a.label === 'Growth')
+    if (growth) growth.amount += realized
+    this.applyRevenue()
+    this.state.transactions.push({
+      id: this.nextId++,
+      at: Date.now(),
+      rail: 'Alpaca',
+      plan: 'paper desk',
+      amount: realized,
+      balance: this.state.mrr,
+    })
+    if (this.state.transactions.length > 40) this.state.transactions.shift()
+    const sign = realized >= 0 ? '+' : ''
+    this.log('finance', 'Market Desk', `${label} — ${sign}$${realized.toFixed(2)} booked to revenue`, chips, `${sign}$${realized.toFixed(2)}`)
+    this.emit()
+  }
+
+  private harvestBusy = false
+
+  private async harvestPositions() {
+    if (this.harvestBusy || this.state.positions.length === 0) return
+    const now = Date.now()
+    const target = this.state.positions.find((p) => {
+      const asset = this.state.assets.find((a) => a.id === p.assetId)
+      if (!asset) return false
+      return shouldHarvest(now - p.at, p.cost, p.qty * asset.price)
+    })
+    if (!target) return
+    this.harvestBusy = true
+    try {
+      const asset = this.state.assets.find((a) => a.id === target.assetId)!
+      let exit = asset.price
+      let chip = 'sim close'
+      if (ORDERS_ENABLED && this.state.marketFeed === 'live') {
+        try {
+          const sold = await submitPaperSell(target.assetId, target.qty)
+          if (sold.filledPrice) exit = sold.filledPrice
+          chip = 'Alpaca paper sell'
+        } catch (e) {
+          this.log('finance', 'Market Desk', `Alpaca sell rejected — closing on the mark (${e instanceof Error ? e.message.slice(0, 60) : 'error'})`)
+        }
+      }
+      const proceeds = target.qty * exit
+      const realized = proceeds - target.cost
+      this.state.positions = this.state.positions.filter((p) => p.id !== target.id)
+      const crypto = this.state.treasury.alloc.find((a) => a.label === 'Crypto')
+      const growth = this.state.treasury.alloc.find((a) => a.label === 'Growth')
+      if (crypto) crypto.amount = Math.max(0, crypto.amount - target.cost)
+      if (growth) growth.amount += target.cost
+      this.bookRealized(realized, `Closed ${asset.symbol} @ $${exit.toLocaleString(undefined, { maximumFractionDigits: exit < 1 ? 4 : 2 })}`, [
+        chip,
+        realized >= 0 ? 'gain' : 'loss',
+      ])
+      void this.syncPaperAccount()
+    } finally {
+      this.harvestBusy = false
+    }
+  }
+
+  private async syncPaperAccount() {
+    const acct = await fetchPaperAccount()
+    if (!acct) return
+    this.state.paperEquity = acct.equity
+    this.emit()
+  }
+
+  tradeNow = (): boolean => {
+    if (this.deskBusy) return false
+    void this.marketRound()
+    return true
   }
 
   private async committeeRound() {
@@ -3512,7 +3885,7 @@ class Engine {
     this.emit()
     await S(1000)
 
-    await this.runTeracGate(feature, camp, winner, tally)
+    await this.publishWinner(feature, camp, winner, tally)
     return { text: winner.text ?? WRITER_COPY[winner.agent](feature), predicted: Math.round(80 + tally * 18) }
   }
 
