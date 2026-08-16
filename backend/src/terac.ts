@@ -201,6 +201,16 @@ export function reviewPageUrl(params: Record<string, string | number | undefined
   return u.toString()
 }
 
+/** Open-ended notes — Terac `pick: text` is the real written form, not a fake radio. */
+export function notesQuestion(text = 'One sentence: why.') {
+  return {
+    key: 'notes',
+    text,
+    pick: 'text' as const,
+    allow_paste: true,
+  }
+}
+
 export function cheapActivity(title: string, description: string, url: string) {
   return {
     sequence: 1,
@@ -234,16 +244,7 @@ export function opportunityBody(projectId: string, input: HireInput) {
           { text: 'Revise — claims are too strong', qualify_logic: 'may', allow_free_text: true },
         ],
       },
-      {
-        key: 'notes',
-        text: 'One sentence: why.',
-        pick: 'one',
-        allow_paste: true,
-        answers: [
-          { text: 'Notes below', qualify_logic: 'may', allow_free_text: true },
-          { text: 'No extra notes', qualify_logic: 'may' },
-        ],
-      },
+      notesQuestion('One sentence: why approve or revise?'),
     ],
     tasks: [
       cheapActivity(
@@ -392,6 +393,8 @@ export function tradeOpportunityBody(projectId: string, input: TradeInput) {
         text:
           `How confident are you that deploying $${input.amount} into ${input.symbol} right now is a reasonable move?\n\n` +
           `Desk consensus 30d ROI: ${roiStr}`,
+        question_rich_text:
+          `How confident are you deploying **$${input.amount}** into **${input.symbol}**?\n\nDesk ranking: ${input.ranking}\nConsensus 30d ROI: ${roiStr}`,
         pick: 'one',
         answers: [
           { text: 'High (75–100%)', qualify_logic: 'may', allow_free_text: true },
@@ -400,16 +403,7 @@ export function tradeOpportunityBody(projectId: string, input: TradeInput) {
           { text: 'Very low (0–25%)', qualify_logic: 'may', allow_free_text: true },
         ],
       },
-      {
-        key: 'notes',
-        text: 'One sentence: what drives your confidence level?',
-        pick: 'one',
-        allow_paste: true,
-        answers: [
-          { text: 'Notes below', qualify_logic: 'may', allow_free_text: true },
-          { text: 'No extra notes', qualify_logic: 'may' },
-        ],
-      },
+      notesQuestion('One sentence: what drives your confidence level?'),
     ],
     tasks: [
       cheapActivity(
@@ -670,16 +664,7 @@ export function allocationOpportunityBody(projectId: string, input: AllocationIn
           { text: 'Adjust — something is off (say what)', qualify_logic: 'may', allow_free_text: true },
         ],
       },
-      {
-        key: 'notes',
-        text: 'One sentence: why, and what to change if adjusting.',
-        pick: 'one',
-        allow_paste: true,
-        answers: [
-          { text: 'Notes below', qualify_logic: 'may', allow_free_text: true },
-          { text: 'No extra notes', qualify_logic: 'may' },
-        ],
-      },
+      notesQuestion('One sentence: why, and what to change if adjusting.'),
     ],
     tasks: [cheapActivity('Open the treasury brief', 'Look at the split, then Approve or Adjust.', page)],
   }
@@ -731,6 +716,153 @@ export async function pollAllocationReview(jobId: string): Promise<Pick<TeracAll
   }
 }
 
+export interface LegalInput {
+  bankName: string
+  balance: number
+  alloc: { label: string; pct: number }[]
+  rationale: string
+  revenueToday: string
+}
+
+export interface TeracLegalReview {
+  live: boolean
+  jobId: string
+  dashboardUrl: string | null
+  quote: number | null
+  expert: string | null
+  title: string
+  verdict: 'approved' | 'revised' | 'waiting' | 'error'
+  reason: string
+}
+
+export function legalPageUrl(): string {
+  const review = REVIEW_URL || 'http://127.0.0.1:8787/review'
+  try {
+    const u = new URL(review)
+    u.pathname = '/legal'
+    u.search = ''
+    return u.toString()
+  } catch {
+    return 'http://127.0.0.1:8787/legal'
+  }
+}
+
+export function legalOpportunityBody(projectId: string, input: LegalInput) {
+  const rows = input.alloc
+    .map((a) => `  ${a.label}: ${a.pct}%  (~$${Math.round((input.balance * a.pct) / 100).toLocaleString()})`)
+    .join('\n')
+  const page = legalPageUrl()
+  return {
+    title: `Legal finances — Bob the Busines`,
+    internal_title: `business-agent-legal-${Date.now()}`,
+    description:
+      `ONE human, ~5 minutes. Review whether Bob the Busines legal finances are in order.\n\n` +
+      `== ACCOUNT ==\n${input.bankName}: $${input.balance.toLocaleString()}\nRevenue today: ${input.revenueToday}\n\n` +
+      `== DIVISION ==\n${rows}\n\n` +
+      `== CFO ==\n${input.rationale}\n\n` +
+      `Open the legal-finances page, then Approve or Flag.\n${page}`,
+    project_id: projectId,
+    ...CHEAP_HIRE,
+    screening_questions: [
+      {
+        key: 'verdict',
+        text: 'Are the legal finances in order? (books, Stripe, allocation, tax reserve)',
+        pick: 'one',
+        answers: [
+          { text: 'Approve — legal finances look in order', qualify_logic: 'may', allow_free_text: true },
+          { text: 'Flag — legal or finance issue (say what)', qualify_logic: 'may', allow_free_text: true },
+        ],
+      },
+      notesQuestion('One sentence: why, and what to fix if flagging.'),
+    ],
+    tasks: [cheapActivity('Open legal finances', 'Read the page, then Approve or Flag.', page)],
+  }
+}
+
+export function parseLegalVerdict(answers: ScreeningAnswer[] | undefined | null): {
+  verdict: 'approved' | 'revised'
+  reason: string
+} {
+  const list = answers ?? []
+  const byKey = (k: string) => list.find((a) => a.key === k)
+  const v = firstAnswer(byKey('verdict'))
+  const notes = firstAnswer(byKey('notes')) || answersOf(byKey('verdict')).slice(1).join(' ').trim()
+  const flagged = /flag|issue|adjust|revise/i.test(v)
+  return {
+    verdict: flagged ? 'revised' : 'approved',
+    reason: notes || (flagged ? 'Human flagged a legal or finance issue.' : 'Human approved legal finances.'),
+  }
+}
+
+export async function hireLegalReview(input: LegalInput): Promise<TeracLegalReview> {
+  if (!isLive()) {
+    return {
+      live: false,
+      jobId: '',
+      dashboardUrl: null,
+      quote: null,
+      expert: null,
+      title: 'Legal finances',
+      verdict: 'error',
+      reason: 'Set TERAC_API_KEY in the workspace .env, then restart the backend.',
+    }
+  }
+  try {
+    const projectId = await ensureProject()
+    const created = await call('/opportunities', { method: 'POST', body: JSON.stringify(legalOpportunityBody(projectId, input)) })
+    const id = created?.id as string | undefined
+    if (!id) throw new Error('Terac did not return an opportunity id')
+    const launched = await call(`/opportunities/${id}/launch`, { method: 'POST', body: JSON.stringify({}) })
+    const quoteCents = launched?.pricing?.cost_per_participant_cents ?? created?.pricing?.cost_per_participant_cents
+    return {
+      live: true,
+      jobId: id,
+      dashboardUrl: launched?.links?.dashboard?.study ?? created?.links?.dashboard?.study ?? null,
+      quote: Number.isFinite(quoteCents) ? Math.round(Number(quoteCents) / 100) : null,
+      expert: null,
+      title: 'Legal finances',
+      verdict: 'waiting',
+      reason: 'Opportunity live — waiting on a human for legal finances.',
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    return {
+      live: true,
+      jobId: '',
+      dashboardUrl: null,
+      quote: null,
+      expert: null,
+      title: 'Legal finances',
+      verdict: 'error',
+      reason: msg.slice(0, 180),
+    }
+  }
+}
+
+export async function pollLegalReview(jobId: string): Promise<Pick<TeracLegalReview, 'verdict' | 'reason' | 'expert'>> {
+  const json = await call(`/opportunities/${encodeURIComponent(jobId)}/submissions?limit=25`)
+  const rows: any[] = json?.data ?? []
+  const done = rows.find(
+    (r) => ['awaiting_review', 'approved', 'screen_passed'].includes(r.status) || (r?.screening_answers ?? []).some((a: ScreeningAnswer) => a.key === 'verdict'),
+  )
+  if (!done) return { verdict: 'waiting', reason: 'Waiting on a human reviewer.', expert: null }
+  let answers: ScreeningAnswer[] = done.screening_answers ?? []
+  if (done.id) {
+    try {
+      const detail = await call(`/submissions/${encodeURIComponent(done.id)}`)
+      if (detail?.screening_answers) answers = detail.screening_answers
+    } catch {
+      // list payload is enough
+    }
+  }
+  const parsed = parseLegalVerdict(answers)
+  return {
+    verdict: parsed.verdict,
+    reason: parsed.reason,
+    expert: done.participant_id ? `expert ${String(done.participant_id).slice(0, 8)}` : 'Terac expert',
+  }
+}
+
 export function shipOpportunityBody(projectId: string, input: ShipInput) {
   const repo = GITHUB_REPO || ''
   const prUrl = input.prNumber ? `https://github.com/${repo}/pull/${input.prNumber}` : `https://github.com/${repo}`
@@ -761,6 +893,7 @@ export function shipOpportunityBody(projectId: string, input: ShipInput) {
       {
         key: 'ship',
         text: `Should we ship "${input.feature}"? Open the PR first: ${prUrl}`,
+        question_rich_text: `Should we ship **${input.feature}**?\n\n1. [Open the PR](${prUrl})\n2. [Open the repo](https://github.com/${repo})\n3. Then answer below.`,
         pick: 'one',
         answers: [
           { text: shipYes, qualify_logic: 'may', allow_free_text: true },
@@ -780,16 +913,7 @@ export function shipOpportunityBody(projectId: string, input: ShipInput) {
           { text: 'No — not perfect, needs work', qualify_logic: 'may', allow_free_text: true },
         ],
       },
-      {
-        key: 'notes',
-        text: 'One sentence: why.',
-        pick: 'one',
-        allow_paste: true,
-        answers: [
-          { text: 'Notes below', qualify_logic: 'may', allow_free_text: true },
-          { text: 'No extra notes', qualify_logic: 'may' },
-        ],
-      },
+      notesQuestion('One sentence: why ship or hold?'),
     ],
     tasks: [
       cheapActivity(
