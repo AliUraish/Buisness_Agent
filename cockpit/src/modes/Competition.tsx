@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ShipGate, ShipJob, ShipStage } from '../sim/engine'
+import { ShipGate, ShipJob, ShipStage, teracVerifyLabel } from '../sim/engine'
 import { useEngineTick } from '../App'
 
 function ago(ts: number, now: number) {
@@ -192,6 +192,13 @@ function ShipPipeline() {
               <span className="chip">{job.pr.file}</span>
               <span className="chip num">{job.pr.sha}</span>
               {job.pr.merged && <span className="chip">merged</span>}
+              {(() => {
+                const v = teracVerifyLabel(job)
+                if (v === 'verified') return <span className="v-confirmed">Terac verified</span>
+                if (v === 'reviewing') return <span className="v-reviewing">Terac reviewing</span>
+                if (v === 'not-verified') return <span className="v-notrepro">Terac not verified</span>
+                return null
+              })()}
             </div>
           )}
           {job.stage === 'blocked' && job.gate.reason && <div className="ship-brief-t">{job.gate.reason}</div>}
