@@ -20,6 +20,7 @@ import { complete, llmStatus, rechargeCredits, type Provider, type Tier } from '
 import { dbStatus, getStateAll, listEvents, putState, saveEvent } from './db.ts'
 import { perfloSummary } from './perflo.ts'
 import { research, researchStatus } from './research.ts'
+import { createReview, getReview, pendingReview, submitReview } from './reviews.ts'
 import { hireAllocationReview, hireLegalReview, pollAllocationReview, pollLegalReview, type AllocationInput, type LegalInput } from './terac.ts'
 import { isXLive, loadTryteracAudience, snapshotStatus } from './x.ts'
 import { FOCUS_REPO, githubStatus, isGithubLive, listRepos, mergePullRequest, scanRepo, shipFeature } from './github.ts'
@@ -212,6 +213,33 @@ const server = http.createServer(async (req, res) => {
     const legalJob = url.pathname.match(/^\/api\/terac\/legal\/([^/]+)$/)
     if (req.method === 'GET' && legalJob) {
       send(res, 200, await pollLegalReview(decodeURIComponent(legalJob[1])))
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/api/reviews') {
+      const b = await readJson(req)
+      const kind = ['ship', 'trade', 'claim', 'allocation'].includes(b?.kind) ? b.kind : 'claim'
+      const payload: Record<string, string> = {}
+      if (b?.payload && typeof b.payload === 'object') {
+        for (const [k, v] of Object.entries(b.payload)) payload[String(k).slice(0, 40)] = String(v).slice(0, 1500)
+      }
+      send(res, 200, createReview(kind, payload))
+      return
+    }
+    if (req.method === 'GET' && url.pathname === '/api/reviews/pending') {
+      send(res, 200, pendingReview() ?? { id: null })
+      return
+    }
+    const rvSubmit = url.pathname.match(/^\/api\/reviews\/([^/]+)\/submit$/)
+    if (req.method === 'POST' && rvSubmit) {
+      const b = await readJson(req)
+      const rec = submitReview(decodeURIComponent(rvSubmit[1]), String(b?.verdict ?? ''), String(b?.notes ?? ''), String(b?.confidence ?? ''))
+      send(res, rec ? 200 : 404, rec ?? { error: 'not found' })
+      return
+    }
+    const rvGet = url.pathname.match(/^\/api\/reviews\/([^/]+)$/)
+    if (req.method === 'GET' && rvGet) {
+      const rec = getReview(decodeURIComponent(rvGet[1]))
+      send(res, rec ? 200 : 404, rec ?? { error: 'not found' })
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/research/status') {
