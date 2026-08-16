@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trade Review</title>
+<style>
+  @font-face { font-family: 'Inter'; font-style: normal; font-weight: 400; font-display: swap; src: url(../assets/inter-400.woff2) format('woff2'); }
+  @font-face { font-family: 'Inter'; font-style: normal; font-weight: 500; font-display: swap; src: url(../assets/inter-500.woff2) format('woff2'); }
+  :root {
+    --bg: #fafaf8; --panel: #ffffff; --border: rgba(0,0,0,0.07); --edge: rgba(0,0,0,0.12);
+    --ink: #111111; --ink-2: #6b6b6b; --ink-3: #9b9b9b;
+    --violet: #7c6ff0; --teal: #2ab3a6; --amber: #e8a33d; --rose: #e05c8a; --green: #3fa55c; --red: #d64545;
+    --shadow: 0 2px 8px rgba(0,0,0,0.08);
+    color-scheme: light only;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--ink); font-family: 'Inter', -apple-system, 'Helvetica Neue', Arial, sans-serif; font-size: 15px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+  .mono { font-family: 'SF Mono', 'Menlo', 'Consolas', monospace; font-variant-numeric: tabular-nums; }
+  .num { font-variant-numeric: tabular-nums; }
+  a { color: inherit; }
+  a:focus-visible, button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; border-radius: 4px; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 0 24px; }
+  .topbar { background: var(--panel); border-bottom: 1px solid var(--border); }
+  .topbar .wrap { height: 52px; display: flex; align-items: center; justify-content: space-between; max-width: 1060px; }
+  .wordmark { font-size: 14px; font-weight: 500; letter-spacing: 0.02em; text-decoration: none; }
+  .wordmark span { color: var(--ink-3); font-weight: 400; }
+  .topbar .back { font-size: 13px; color: var(--ink-3); text-decoration: none; }
+  .topbar .back:hover { color: var(--ink); }
+  main { padding: 56px 0 80px; }
+  .eyebrow { font-size: 11px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--ink-3); font-weight: 500; margin-bottom: 14px; }
+  h1 { font-size: clamp(28px, 5vw, 40px); font-weight: 500; letter-spacing: -0.035em; line-height: 1.08; text-wrap: balance; margin-bottom: 12px; }
+  .lede { font-size: 16px; color: var(--ink-2); text-wrap: pretty; margin-bottom: 20px; }
+  .lede strong { color: var(--ink); font-weight: 500; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 36px; }
+  .chip { font-family: 'SF Mono', 'Menlo', monospace; font-size: 11px; color: var(--ink-2); border: 1px solid var(--border); background: var(--panel); border-radius: 999px; padding: 3px 11px; }
+  .chip i { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 6px; position: relative; top: -1px; }
+  section { margin-bottom: 36px; }
+  h2 { font-size: 13px; font-weight: 500; letter-spacing: 0.07em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 12px; }
+  p { color: var(--ink-2); text-wrap: pretty; }
+  p strong { color: var(--ink); font-weight: 500; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); padding: 20px 22px; }
+  .btns { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
+  .btn { display: inline-block; font: inherit; font-size: 14px; font-weight: 500; padding: 10px 20px; border-radius: 8px; text-decoration: none; border: 1px solid transparent; cursor: pointer; background: none; }
+  .btn.primary { background: var(--ink); color: var(--bg); }
+  .btn.primary:hover { opacity: 0.85; }
+  .btn.primary:disabled { opacity: 0.4; cursor: default; }
+  .btn.ghost { border-color: var(--edge); color: var(--ink-2); }
+  .btn.ghost:hover { color: var(--ink); border-color: var(--ink-3); }
+  label.field { display: block; margin-bottom: 16px; }
+  label.field .fname { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; }
+  label.field .fhint { color: var(--ink-3); font-weight: 400; }
+  textarea, input[type="text"] {
+    width: 100%; font: inherit; font-size: 14px; color: var(--ink);
+    background: var(--panel); border: 1px solid var(--edge); border-radius: 8px;
+    padding: 10px 12px; resize: vertical;
+  }
+  textarea { min-height: 74px; }
+  .sendnote { font-size: 12.5px; color: var(--ink-3); margin-top: 10px; }
+  .sendnote.ok { color: var(--green); }
+  .sendnote.err { color: var(--red); }
+  footer { border-top: 1px solid var(--border); padding: 26px 0 40px; }
+  footer .wrap { max-width: 1060px; display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-3); }
+  footer a { color: var(--ink-3); }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+  .charts { display: grid; grid-template-columns: 1fr; gap: 14px; }
+  .chartcard { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); padding: 16px 18px 10px; }
+  .chead { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 4px; flex-wrap: wrap; }
+  .chead .sym { font-weight: 500; font-size: 15px; }
+  .chead .sym i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; }
+  .chead .px { font-family: 'SF Mono','Menlo',monospace; font-size: 13px; }
+  .chead .px .chg-up { color: var(--green); }
+  .chead .px .chg-dn { color: var(--red); }
+  .chead .tv { font-size: 12px; color: var(--ink-3); text-decoration: none; border: 1px solid var(--edge); border-radius: 6px; padding: 3px 10px; white-space: nowrap; }
+  .chead .tv:hover { color: var(--ink); border-color: var(--ink-3); }
+  .plot { position: relative; }
+  .plot svg { display: block; width: 100%; height: 180px; }
+  .tip { position: absolute; pointer-events: none; background: var(--ink); color: var(--bg); font-family: 'SF Mono','Menlo',monospace; font-size: 11px; padding: 3px 8px; border-radius: 5px; transform: translate(-50%, -130%); white-space: nowrap; display: none; }
+  .ranknote { font-size: 11.5px; color: var(--ink-3); margin-top: 12px; }
+  .conf { border: none; margin-bottom: 16px; }
+  .conf legend { margin-bottom: 8px; }
+  .conf label { display: block; font-size: 14px; color: var(--ink-2); padding: 4px 0; }
+  .conf input { margin-right: 8px; accent-color: #111111; }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap">
+    <a class="wordmark" href="../index.html">Bob the Busines <span>/ human loop</span></a>
+    <a class="back" href="../dashboard/">open the dashboard</a>
+  </div>
+</header>
+<main>
+  <div class="wrap">
+
+    <div class="eyebrow">Terac briefing · investment desk</div>
+    <h1>Real money wants to move. Read the charts first.</h1>
+    <p class="lede">Bob the Busines wants to deploy subscription cash into the desk's top pick. Below are the desk's two best-ranked assets, drawn from the <strong>live Alpaca feed</strong>. Study them, open TradingView if you want more, then give us your technical analysis.</p>
+    <div class="chips">
+      <span class="chip"><i style="background: var(--amber)"></i>finance</span>
+      <span class="chip">ONE human</span>
+      <span class="chip">~5 minutes</span>
+      <span class="chip" id="feedchip">alpaca: connecting…</span>
+    </div>
+
+    <section>
+      <h2>1 · The desk's best picks</h2>
+      <div class="charts" id="charts"></div>
+      <p class="ranknote mono">desk ranking: 1 ETH +3.9% · 2 BTC +2.5% · 3 SOL −2.1% · 4 AVAX −2.2% · 5 DOGE −3.5% · consensus 30d ROI</p>
+    </section>
+
+    <section>
+      <h2>2 · Your technical analysis</h2>
+      <form id="tradeform" class="card">
+        <label class="field">
+          <span class="fname">Why do you believe the #1 pick is (or isn't) the best move? <span class="fhint">— support/resistance, trend, volume, anything you read off the chart</span></span>
+          <textarea name="ta" required placeholder="e.g. ETH is holding above its 5-min session VWAP with higher lows; BTC's bounce looks weaker — I'd agree with the desk."></textarea>
+        </label>
+        <fieldset class="conf">
+          <legend class="fname">Confidence in deploying at the stated size</legend>
+          <label><input type="radio" name="conf" value="High (75–100%)" required> High (75–100%)</label>
+          <label><input type="radio" name="conf" value="Medium (50–75%)"> Medium (50–75%)</label>
+          <label><input type="radio" name="conf" value="Low (25–50%)"> Low (25–50%)</label>
+          <label><input type="radio" name="conf" value="Very low (0–25%)"> Very low (0–25%)</label>
+        </fieldset>
+        <button class="btn primary" type="submit">Forward to the pipeline</button>
+        <p class="sendnote" id="tradenote">Your analysis weights the desk's decision — High or Medium lets the trade execute at size.</p>
+      </form>
+    </section>
+
+  </div>
+</main>
+<footer>
+  <div class="wrap">
+    <span>Bob the Busines — a zero-human company experiment (except you)</span>
+    <span class="mono">one human &middot; ~5 minutes &middot; paid via Terac</span>
+  </div>
+</footer>
+<script>
+const PIPELINE = 'http://127.0.0.1:8787/api/db/events';
+async function sendToPipeline(payload, noteEl, btnEl) {
+  noteEl.className = 'sendnote'; noteEl.textContent = 'Sending to the pipeline…';
+  btnEl.disabled = true;
+  try {
+    const r = await fetch(PIPELINE, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const j = await r.json();
+    if (!j.ok) throw new Error('backend declined the event');
+    noteEl.className = 'sendnote ok';
+    noteEl.textContent = 'Sent. Your review is in the activity feed — the agents pick it up next cycle.';
+  } catch (e) {
+    const q = JSON.parse(localStorage.getItem('terac-feedback-queue') || '[]');
+    q.push({ ...payload, queuedAt: new Date().toISOString() });
+    localStorage.setItem('terac-feedback-queue', JSON.stringify(q));
+    noteEl.className = 'sendnote err';
+    noteEl.textContent = 'Pipeline offline — saved locally (' + q.length + ' queued). Start the backend and resubmit.';
+    btnEl.disabled = false;
+  }
+}
+
+// Best two desk picks, charted from the live Alpaca feed (via the cockpit proxy).
+const ASSETS = [
+  { id: 'ETH', name: 'Ethereum', sym: 'ETH/USD', tv: 'COINBASE:ETHUSD', color: 'var(--violet)', rank: '#1 pick · desk 30d ROI +3.9%', seed: 1883 },
+  { id: 'BTC', name: 'Bitcoin',  sym: 'BTC/USD', tv: 'COINBASE:BTCUSD', color: 'var(--amber)',  rank: '#2 pick · desk 30d ROI +2.5%', seed: 63112 },
+];
+const PROXY = 'http://localhost:5199/alpaca/data/v1beta3/crypto/us';
+
+function demoBars(seed) { // seeded walk fallback so the page still reads offline
+  let s = seed, x = seed; const out = [];
+  const rnd = () => { s = (s * 1103515245 + 12345) % 2147483648; return s / 2147483648 - 0.5; };
+  for (let i = 0; i < 110; i++) { x = x * (1 + rnd() * 0.004); out.push(x); }
+  return out;
+}
+
+function fmt(v) { return v >= 1000 ? '$' + Math.round(v).toLocaleString() : '$' + v.toFixed(v >= 10 ? 2 : 4); }
+
+function drawChart(host, closes, a, live) {
+  const W = 640, H = 180, P = { t: 12, r: 66, b: 18, l: 8 };
+  const min = Math.min(...closes), max = Math.max(...closes), span = (max - min) || 1;
+  const X = i => P.l + (i / (closes.length - 1)) * (W - P.l - P.r);
+  const Y = v => P.t + (1 - (v - min) / span) * (H - P.t - P.b);
+  const pts = closes.map((v, i) => `${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(' ');
+  const last = closes[closes.length - 1], first = closes[0];
+  const chg = (last / first - 1) * 100;
+  const gridY = [0.25, 0.5, 0.75].map(f => (P.t + f * (H - P.t - P.b)).toFixed(1));
+  host.querySelector('.plot').innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${a.name} price, last ~9 hours, 5-minute closes">
+      ${gridY.map(y => `<line x1="${P.l}" x2="${W - P.r}" y1="${y}" y2="${y}" stroke="rgba(0,0,0,0.05)" stroke-width="1"/>`).join('')}
+      <polyline points="${pts}" fill="none" stroke="${a.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+      <circle cx="${X(closes.length - 1)}" cy="${Y(last)}" r="3.5" fill="${a.color}" stroke="#ffffff" stroke-width="2"/>
+      <text x="${X(closes.length - 1) + 8}" y="${Y(last) + 4}" font-family="SF Mono,Menlo,monospace" font-size="11" fill="#111111">${fmt(last)}</text>
+      <text x="${P.l}" y="${H - 4}" font-family="SF Mono,Menlo,monospace" font-size="10" fill="#9b9b9b">${live ? '9h ago' : 'demo data'}</text>
+      <text x="${W - P.r}" y="${H - 4}" text-anchor="end" font-family="SF Mono,Menlo,monospace" font-size="10" fill="#9b9b9b">now</text>
+      <rect class="hover" x="0" y="0" width="${W}" height="${H}" fill="transparent"/>
+    </svg>
+    <div class="tip"></div>`;
+  const px = host.querySelector('.px');
+  px.innerHTML = fmt(last) + ' <span class="' + (chg >= 0 ? 'chg-up' : 'chg-dn') + '">' + (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%</span>';
+  // crosshair tooltip
+  const svg = host.querySelector('svg'), tip = host.querySelector('.tip');
+  svg.addEventListener('mousemove', (e) => {
+    const r = svg.getBoundingClientRect();
+    const fx = (e.clientX - r.left) / r.width * W;
+    const i = Math.max(0, Math.min(closes.length - 1, Math.round((fx - P.l) / (W - P.l - P.r) * (closes.length - 1))));
+    const mins = (closes.length - 1 - i) * 5;
+    tip.style.display = 'block';
+    tip.style.left = (X(i) / W * 100) + '%';
+    tip.style.top = (Y(closes[i]) / H * 100) + '%';
+    tip.textContent = fmt(closes[i]) + ' · ' + (mins === 0 ? 'now' : mins + 'm ago');
+  });
+  svg.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+}
+
+async function loadCharts() {
+  const wrap = document.getElementById('charts');
+  const chip = document.getElementById('feedchip');
+  for (const a of ASSETS) {
+    const card = document.createElement('div');
+    card.className = 'chartcard';
+    card.innerHTML = `
+      <div class="chead">
+        <span class="sym"><i style="background:${a.color}"></i>${a.name} <span class="mono" style="color:var(--ink-3);font-size:11px">${a.rank}</span></span>
+        <span class="px mono">…</span>
+        <a class="tv" href="https://www.tradingview.com/chart/?symbol=${encodeURIComponent(a.tv)}" target="_blank" rel="noopener">View on TradingView ↗</a>
+      </div>
+      <div class="plot"></div>`;
+    wrap.appendChild(card);
+  }
+  let live = false;
+  let bars = {};
+  try {
+    const start = new Date(Date.now() - 10 * 3600e3).toISOString();
+    // Alpaca's limit is total across symbols — fetch each asset separately
+    const results = await Promise.all(ASSETS.map(a =>
+      fetch(`${PROXY}/bars?symbols=${encodeURIComponent(a.sym)}&timeframe=5Min&start=${encodeURIComponent(start)}&limit=110`)
+        .then(r => r.json()).catch(() => null)));
+    ASSETS.forEach((a, i) => {
+      const b = results[i]?.bars?.[a.sym];
+      if (Array.isArray(b) && b.length > 10) bars[a.id] = b.map(x => x.c);
+    });
+    live = Object.keys(bars).length === ASSETS.length;
+  } catch (e) { /* fall through to demo */ }
+  chip.textContent = live ? 'alpaca: live 5-min bars' : 'alpaca: offline — demo bars';
+  document.querySelectorAll('.chartcard').forEach((card, i) => {
+    const a = ASSETS[i];
+    drawChart(card, bars[a.id] || demoBars(a.seed), a, live);
+  });
+}
+loadCharts();
+
+document.getElementById('tradeform').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const d = new FormData(e.target);
+  sendToPipeline(
+    { dept: 'finance', agent: 'Trade Reviewer (human)',
+      message: 'Human trade review — ' + d.get('conf') + ' · TA: ' + d.get('ta'),
+      chips: ['ETH #1 pick', d.get('conf')] },
+    document.getElementById('tradenote'),
+    e.target.querySelector('button[type=submit]')
+  );
+});
+
+</script>
+</body>
+</html>
