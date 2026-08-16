@@ -1,0 +1,69 @@
+# Bob the Busines — cockpit (static) + backend (Node API)
+# Matches the live Render services. Secrets are sync: false.
+
+services:
+  - type: web
+    name: Buisness_Agent
+    runtime: node
+    plan: starter
+    region: virginia
+    rootDir: backend
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: GITHUB_REPO
+        value: AliUraish/Buisness_Agent
+      - key: TERAC_API_KEY
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: X_BEARER_TOKEN
+        sync: false
+      - key: LINQ_API_KEY
+        sync: false
+      - key: LINQ_SEND_FROM
+        sync: false
+      - key: LINQ_TEST_PHONE
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_PAYMENT_LINK
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: NEON_URL
+        sync: false
+      - key: PERFLO_TOKEN
+        sync: false
+      - key: PERPLEXITY_API_KEY
+        sync: false
+
+  - type: web
+    name: Buisness_Agent-1
+    runtime: static
+    plan: free
+    region: oregon
+    rootDir: cockpit
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    autoDeployTrigger: commit
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: VITE_API_URL
+        fromService:
+          name: Buisness_Agent
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
