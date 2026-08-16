@@ -60,8 +60,7 @@ export async function fetchBars(ids: string[], limit = 110): Promise<Record<stri
   return out
 }
 
-// market BUY by notional USD against the paper account
-export async function submitPaperOrder(assetId: string, notional: number): Promise<{ id: string; filledPrice: number | null }> {
+async function postOrder(body: Record<string, string>): Promise<{ id: string; filledPrice: number | null }> {
   const ctl = new AbortController()
   const t = setTimeout(() => ctl.abort(), 8000)
   try {
@@ -69,13 +68,7 @@ export async function submitPaperOrder(assetId: string, notional: number): Promi
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       signal: ctl.signal,
-      body: JSON.stringify({
-        symbol: ALPACA_SYMBOL[assetId],
-        notional: String(notional),
-        side: 'buy',
-        type: 'market',
-        time_in_force: 'gtc',
-      }),
+      body: JSON.stringify(body),
     })
     if (!res.ok) throw new Error(`order HTTP ${res.status}: ${(await res.text()).slice(0, 120)}`)
     const json = await res.json()
@@ -84,4 +77,45 @@ export async function submitPaperOrder(assetId: string, notional: number): Promi
   } finally {
     clearTimeout(t)
   }
+}
+
+// market BUY by notional USD against the paper account
+export async function submitPaperOrder(assetId: string, notional: number): Promise<{ id: string; filledPrice: number | null }> {
+  return postOrder({
+    symbol: ALPACA_SYMBOL[assetId],
+    notional: String(notional),
+    side: 'buy',
+    type: 'market',
+    time_in_force: 'gtc',
+  })
+}
+
+export async function submitPaperSell(assetId: string, qty: number): Promise<{ id: string; filledPrice: number | null }> {
+  return postOrder({
+    symbol: ALPACA_SYMBOL[assetId],
+    qty: String(qty),
+    side: 'sell',
+    type: 'market',
+    time_in_force: 'gtc',
+  })
+}
+
+export async function fetchPaperAccount(): Promise<{ equity: number; cash: number } | null> {
+  try {
+    const json = await get(`${PAPER}/account`, 8000)
+    const equity = Number(json.equity ?? json.portfolio_value)
+    const cash = Number(json.cash)
+    if (!Number.isFinite(equity)) return null
+    return { equity, cash: Number.isFinite(cash) ? cash : 0 }
+  } catch {
+    return null
+  }
+}
+
+export function shouldHarvest(heldMs: number, cost: number, market: number): boolean {
+  if (heldMs < 30_000 || cost <= 0) return false
+  const pnlPct = (market - cost) / cost
+  if (pnlPct >= 0.003) return true
+  if (heldMs >= 90_000) return true
+  return false
 }
