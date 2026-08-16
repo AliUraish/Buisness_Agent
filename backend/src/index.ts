@@ -360,8 +360,12 @@ const server = http.createServer(async (req, res) => {
   }
 })
 
-server.listen(PORT, '127.0.0.1', () => {
+// Local runs stay private on 127.0.0.1. Hosted platforms (Render sets
+// RENDER=true) must bind 0.0.0.0 or their port scan never sees the server.
+// HOST overrides either way.
+const HOST = process.env.HOST || (process.env.RENDER ? '0.0.0.0' : '127.0.0.1')
+server.listen(PORT, HOST, () => {
   console.log(
-    `[backend] http://127.0.0.1:${PORT}  terac ${isLive() ? 'live' : 'off'}  mcp ${isLive() ? 'armed' : 'off'}  x ${isXLive() ? 'live' : 'off'}  github ${isGithubLive() ? 'live' : 'off'}`,
+    `[backend] http://${HOST}:${PORT}  terac ${isLive() ? 'live' : 'off'}  mcp ${isLive() ? 'armed' : 'off'}  x ${isXLive() ? 'live' : 'off'}  github ${isGithubLive() ? 'live' : 'off'}`,
   )
 })
