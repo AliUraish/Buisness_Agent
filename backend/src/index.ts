@@ -23,6 +23,7 @@ import { research, researchStatus } from './research.ts'
 import { hireAllocationReview, hireLegalReview, pollAllocationReview, pollLegalReview, type AllocationInput, type LegalInput } from './terac.ts'
 import { isXLive, loadTryteracAudience, snapshotStatus } from './x.ts'
 import { FOCUS_REPO, githubStatus, isGithubLive, listRepos, mergePullRequest, scanRepo, shipFeature } from './github.ts'
+import { teracMcpStatus } from './terac-mcp.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -168,7 +169,8 @@ const server = http.createServer(async (req, res) => {
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/terac/status') {
-      send(res, 200, { live: isLive() })
+      const mcp = await teracMcpStatus()
+      send(res, 200, { live: isLive(), mcp })
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/linq/status') {
@@ -360,6 +362,6 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log(
-    `[backend] http://127.0.0.1:${PORT}  terac ${isLive() ? 'live' : 'off'}  x ${isXLive() ? 'live' : 'off'}  github ${isGithubLive() ? 'live' : 'off'}`,
+    `[backend] http://127.0.0.1:${PORT}  terac ${isLive() ? 'live' : 'off'}  mcp ${isLive() ? 'armed' : 'off'}  x ${isXLive() ? 'live' : 'off'}  github ${isGithubLive() ? 'live' : 'off'}`,
   )
 })
