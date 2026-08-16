@@ -65,38 +65,56 @@
 </head>
 <body>
   <div class="wrap">
-    <div class="brand">Terac · ship review · human in the loop</div>
-    <h1>Should we ship this?</h1>
-    <p class="meta">Agents at Bob the Busines opened this change on AliUraish/Buisness_Agent. Open the PR, read the diff, then answer. Same answers go into Terac.</p>
+    <div class="brand" id="brand">Terac · __MODE__ · human in the loop</div>
+    <h1 id="title">Should we ship this?</h1>
+    <p class="meta" id="meta">Agents at Bob the Busines opened this change. Open the brief, then submit the same answers in the Terac screener — that is the official form.</p>
 
-    <div class="card">
-      <div class="k">Feature / commit</div>
+    <div class="card" id="brief-card">
+      <div class="k" id="brief-k">Feature / commit</div>
       <div class="feat" id="feature">__FEATURE__</div>
       <p class="mono" id="pr-line">__PR_LINE__</p>
       <p class="brief" id="brief">__BRIEF__</p>
-      <div class="links">
+      <div class="links" id="links">
         <a class="go" id="pr-link" href="__PR_URL__" target="_blank" rel="noopener">Open the PR</a>
         <a class="ghost" id="repo-link" href="__REPO_URL__" target="_blank" rel="noopener">Open the repo</a>
       </div>
       <p class="mono" style="margin-top:10px" id="files">Files: __FILES__</p>
     </div>
 
-    <form class="card" id="form">
-      <div class="k">Your verdict</div>
+    <form class="card" id="form-ship">
+      <div class="k">Terac screener (copy these answers into Terac)</div>
       <p class="q">1. Should we ship this feature / PR?</p>
       <label class="opt"><input type="radio" name="ship" value="yes" /> Yes — ship it</label>
       <label class="opt"><input type="radio" name="ship" value="no" /> No — do not ship</label>
-
       <div id="code-block">
         <p class="q">2. You said ship. Open the repo / PR. Is the code ready?</p>
         <label class="opt"><input type="radio" name="code" value="perfect" /> Yes — code is ready to merge</label>
         <label class="opt"><input type="radio" name="code" value="not" /> No — not perfect, needs work</label>
       </div>
-
       <p class="q" style="margin-top:16px">3. One sentence: why.</p>
       <textarea name="notes" placeholder="e.g. PR matches the feature; tests missing on the new module."></textarea>
     </form>
-    <p class="foot">Submit these same answers in Terac. This page is the briefing + form the human sees.</p>
+
+    <form class="card" id="form-trade" hidden>
+      <div class="k">Terac screener (copy these answers into Terac)</div>
+      <p class="q">1. Confidence in deploying at the stated size</p>
+      <label class="opt"><input type="radio" name="conf" value="High (75–100%)" /> High (75–100%)</label>
+      <label class="opt"><input type="radio" name="conf" value="Medium (50–75%)" /> Medium (50–75%)</label>
+      <label class="opt"><input type="radio" name="conf" value="Low (25–50%)" /> Low (25–50%)</label>
+      <label class="opt"><input type="radio" name="conf" value="Very low (0–25%)" /> Very low (0–25%)</label>
+      <p class="q" style="margin-top:16px">2. One sentence: what drives that confidence?</p>
+      <textarea name="ta" placeholder="e.g. ETH holding VWAP; size is fine for paper."></textarea>
+    </form>
+
+    <form class="card" id="form-claim" hidden>
+      <div class="k">Terac screener (copy these answers into Terac)</div>
+      <p class="q">Should we post this as written?</p>
+      <label class="opt"><input type="radio" name="verdict" value="approve" /> Approve — post as written</label>
+      <label class="opt"><input type="radio" name="verdict" value="revise" /> Revise — claims are too strong</label>
+      <p class="q" style="margin-top:16px">One sentence: why.</p>
+      <textarea name="claimnotes" placeholder="e.g. The claim matches the merged PR."></textarea>
+    </form>
+    <p class="foot">The scored form is Terac’s screener. This page is the briefing the activity task opens.</p>
   </div>
   <script>
     const q = new URLSearchParams(location.search)
@@ -116,6 +134,28 @@
     if (files) set('files', 'Files: ' + files)
     href('pr-link', prUrl)
     href('repo-link', repoUrl)
+
+    const mode = (q.get('mode') || '__MODE__' || 'ship').toLowerCase()
+    const shipForm = document.getElementById('form-ship')
+    const tradeForm = document.getElementById('form-trade')
+    const claimForm = document.getElementById('form-claim')
+    if (mode === 'trade') {
+      document.getElementById('title').textContent = 'Should we take this trade?'
+      document.getElementById('meta').textContent = 'The desk wants to deploy paper size. Read the ranking, then submit confidence in the Terac screener.'
+      document.getElementById('brief-k').textContent = 'Desk pick'
+      document.getElementById('links').hidden = true
+      document.getElementById('files').hidden = true
+      shipForm.hidden = true
+      tradeForm.hidden = false
+    } else if (mode === 'claim') {
+      document.getElementById('title').textContent = 'Should we post this?'
+      document.getElementById('meta').textContent = 'Read the draft, then Approve or Revise in the Terac screener.'
+      document.getElementById('brief-k').textContent = 'Draft post'
+      document.getElementById('links').hidden = true
+      document.getElementById('files').hidden = true
+      shipForm.hidden = true
+      claimForm.hidden = false
+    }
 
     const codeBlock = document.getElementById('code-block')
     document.querySelectorAll('input[name="ship"]').forEach((el) => {
