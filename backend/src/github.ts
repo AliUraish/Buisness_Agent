@@ -337,13 +337,14 @@ export async function githubStatus(): Promise<{
   }
   const repo = await ghget(`/repos/${FOCUS_REPO}`)
   const canPush = canPushFrom(repo.json)
+  const writeNote = GITHUB_READ_ONLY ? 'Read-only mode: agents can scan but never push, open PRs, or merge.' : GITHUB_WRITE_HINT
   return {
     live: user.ok && repo.ok,
     repo: FOCUS_REPO,
     login,
     canPush,
-    hint: GITHUB_WRITE_HINT,
-    error: !user.ok ? errMsg(user.json, `GitHub ${user.status}`) : !repo.ok ? errMsg(repo.json, `GitHub ${repo.status}`) : canPush ? null : GITHUB_WRITE_HINT,
+    hint: writeNote,
+    error: !user.ok ? errMsg(user.json, `GitHub ${user.status}`) : !repo.ok ? errMsg(repo.json, `GitHub ${repo.status}`) : canPush ? null : writeNote,
   }
 }
 
