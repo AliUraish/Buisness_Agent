@@ -1,5 +1,6 @@
 // Client for the backend LLM proxy — the agents' real brains.
 // The backend enforces the spend rails (per-call token cap, session call cap).
+import { apiUrl } from './api.ts'
 
 export type LlmProvider = 'anthropic' | 'openai' | 'gemini'
 
@@ -27,7 +28,7 @@ export interface LlmResult {
 
 export async function fetchLlmStatus(): Promise<LlmStatus | null> {
   try {
-    const res = await fetch('/api/llm/status')
+    const res = await fetch(apiUrl('/api/llm/status'))
     if (!res.ok) return null
     return (await res.json()) as LlmStatus
   } catch {
@@ -37,7 +38,7 @@ export async function fetchLlmStatus(): Promise<LlmStatus | null> {
 
 export async function rechargeLlmCredits(pack = 40): Promise<{ ok: boolean; added: number } | null> {
   try {
-    const res = await fetch('/api/llm/recharge', {
+    const res = await fetch(apiUrl('/api/llm/recharge'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pack }),
@@ -60,7 +61,7 @@ export async function llmComplete(input: {
   const ctl = new AbortController()
   const t = setTimeout(() => ctl.abort(), 30000)
   try {
-    const res = await fetch('/api/llm/complete', {
+    const res = await fetch(apiUrl('/api/llm/complete'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(input),

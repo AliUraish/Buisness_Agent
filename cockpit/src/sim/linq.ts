@@ -1,5 +1,6 @@
 // Thin client for the Business_Agent backend's Linq routes. The integration token
 // and phone numbers live in /backend — this file only talks to /api/linq.
+import { apiUrl } from './api.ts'
 
 export interface LinqSendResult {
   live: boolean
@@ -16,7 +17,7 @@ export interface LinqStatus {
   paymentLink: string | null
 }
 
-const BASE = '/api/linq'
+const BASE = apiUrl('/api/linq')
 
 async function api<T>(path: string, init?: RequestInit, timeoutMs = 20000): Promise<T> {
   const ctl = new AbortController()

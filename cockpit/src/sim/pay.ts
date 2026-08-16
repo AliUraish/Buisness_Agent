@@ -1,4 +1,5 @@
 // Thin client for the Business_Agent backend's payment reads (Stripe test + Whop).
+import { apiUrl } from './api.ts'
 
 export interface RailSummary {
   live: boolean
@@ -32,7 +33,7 @@ export async function fetchStripeToday(): Promise<TodayRevenue | null> {
   const ctl = new AbortController()
   const t = setTimeout(() => ctl.abort(), 15000)
   try {
-    const res = await fetch('/api/pay/today', { signal: ctl.signal })
+    const res = await fetch(apiUrl('/api/pay/today'), { signal: ctl.signal })
     if (!res.ok) return null
     return (await res.json()) as TodayRevenue
   } catch {
@@ -46,7 +47,7 @@ export async function fetchPaySummary(): Promise<PaySummary | null> {
   const ctl = new AbortController()
   const t = setTimeout(() => ctl.abort(), 15000)
   try {
-    const res = await fetch('/api/pay/summary', { signal: ctl.signal })
+    const res = await fetch(apiUrl('/api/pay/summary'), { signal: ctl.signal })
     if (!res.ok) return null
     return (await res.json()) as PaySummary
   } catch {

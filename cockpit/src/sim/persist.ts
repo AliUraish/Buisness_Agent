@@ -2,6 +2,8 @@
 // journal and the key/value state snapshots. All fire-and-forget safe —
 // the cockpit runs identically if the database is unreachable.
 
+import { apiUrl } from './api.ts'
+
 export interface DbStatus {
   live: boolean
   error: string | null
@@ -12,7 +14,7 @@ async function req(path: string, init?: RequestInit, timeoutMs = 12000): Promise
   const ctl = new AbortController()
   const t = setTimeout(() => ctl.abort(), timeoutMs)
   try {
-    const res = await fetch(path, {
+    const res = await fetch(apiUrl(path), {
       ...init,
       headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
       signal: ctl.signal,

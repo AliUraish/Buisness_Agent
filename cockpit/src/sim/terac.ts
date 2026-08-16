@@ -1,5 +1,6 @@
 // Thin client for the Business_Agent backend. Terac keys and the hire live in
 // /backend — this file only talks to /api/terac.
+import { apiUrl } from './api.ts'
 
 export interface TeracReview {
   live: boolean
@@ -12,7 +13,7 @@ export interface TeracReview {
   reason: string
 }
 
-const BASE = '/api/terac'
+const BASE = apiUrl('/api/terac')
 
 async function api<T>(path: string, init?: RequestInit, timeoutMs = 90000): Promise<T> {
   const ctl = new AbortController()

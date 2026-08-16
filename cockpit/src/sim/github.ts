@@ -1,4 +1,5 @@
 // Thin client for /api/github/* — the token stays on the backend.
+import { apiUrl } from './api.ts'
 
 export interface GithubCommit {
   sha: string
@@ -85,7 +86,7 @@ export async function fetchGithubScan(repo?: string | null): Promise<GithubScan>
   const t = setTimeout(() => ctl.abort(), 25000)
   try {
     const q = repo ? `?repo=${encodeURIComponent(repo)}` : ''
-    const res = await fetch('/api/github/scan' + q, { signal: ctl.signal })
+    const res = await fetch(apiUrl('/api/github/scan') + q, { signal: ctl.signal })
     const json = await res.json()
     if (!res.ok) {
       return {
@@ -126,7 +127,7 @@ export async function shipGithubFeature(input: {
   const ctl = new AbortController()
   const t = setTimeout(() => ctl.abort(), 90000)
   try {
-    const res = await fetch('/api/github/ship', {
+    const res = await fetch(apiUrl('/api/github/ship'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(input),
@@ -168,7 +169,7 @@ export async function mergeGithubPr(number: number): Promise<{ live: boolean; me
   const ctl = new AbortController()
   const t = setTimeout(() => ctl.abort(), 45000)
   try {
-    const res = await fetch('/api/github/merge', {
+    const res = await fetch(apiUrl('/api/github/merge'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ number }),

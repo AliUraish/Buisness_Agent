@@ -1,4 +1,5 @@
 // Client for the backend's Perflo reads (the agent bank).
+import { apiUrl } from './api.ts'
 export interface PerfloSummary {
   live: boolean
   balance: number | null
@@ -12,7 +13,7 @@ export async function fetchPerfloSummary(): Promise<PerfloSummary | null> {
   const ctl = new AbortController()
   const t = setTimeout(() => ctl.abort(), 15000)
   try {
-    const res = await fetch('/api/perflo/summary', { signal: ctl.signal })
+    const res = await fetch(apiUrl('/api/perflo/summary'), { signal: ctl.signal })
     if (!res.ok) return null
     return (await res.json()) as PerfloSummary
   } catch {

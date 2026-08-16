@@ -1,4 +1,5 @@
 // Client for the backend's Perplexity research (competition desk).
+import { apiUrl } from './api.ts'
 export interface ResearchResult {
   live: boolean
   text: string
@@ -9,7 +10,7 @@ export interface ResearchResult {
 
 export async function fetchResearchStatus(): Promise<{ live: boolean } | null> {
   try {
-    const res = await fetch('/api/research/status')
+    const res = await fetch(apiUrl('/api/research/status'))
     if (!res.ok) return null
     return await res.json()
   } catch {
@@ -21,7 +22,7 @@ export async function runResearch(query: string, system: string): Promise<Resear
   const ctl = new AbortController()
   const t = setTimeout(() => ctl.abort(), 35000)
   try {
-    const res = await fetch('/api/research', {
+    const res = await fetch(apiUrl('/api/research'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query, system }),

@@ -1,4 +1,5 @@
 // Thin client for GET /api/x/audience — keys stay on the backend.
+import { apiUrl } from './api.ts'
 
 export interface XPerson {
   name: string
@@ -25,7 +26,7 @@ export async function fetchTryteracAudience(): Promise<XAudience> {
   const ctl = new AbortController()
   const t = setTimeout(() => ctl.abort(), 25000)
   try {
-    const res = await fetch('/api/x/audience', { signal: ctl.signal })
+    const res = await fetch(apiUrl('/api/x/audience'), { signal: ctl.signal })
     const json = await res.json()
     if (!res.ok) {
       return {
