@@ -230,10 +230,23 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms))
 }
 
+// Agents are READ-ONLY on GitHub: every API call funnels through here, and
+// anything that isn't a GET is refused before it reaches the network. No
+// branches, commits, file writes, PRs, or merges — scan/status reads only.
+const GITHUB_READ_ONLY = true
+
 async function ghreq(
   path: string,
   init?: { method?: string; body?: unknown; timeoutMs?: number },
 ): Promise<{ ok: boolean; status: number; json: any }> {
+  const method = (init?.method ?? 'GET').toUpperCase()
+  if (GITHUB_READ_ONLY && method !== 'GET') {
+    return {
+      ok: false,
+      status: 403,
+      json: { message: `read-only mode: agents may not ${method} ${path} — GitHub writes are disabled` },
+    }
+  }
   const ctl = new AbortController()
   const t = setTimeout(() => ctl.abort(), init?.timeoutMs ?? 20000)
   try {
