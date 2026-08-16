@@ -6,7 +6,7 @@
 import { AUDIENCE } from '../data/audience'
 import { mulberry32 } from './rng'
 import { fetchBars, fetchLatestPrices, fetchPaperAccount, submitPaperOrder, submitPaperSell, shouldHarvest, ORDERS_ENABLED } from './alpaca'
-import { hireAllocationReview, hireClaimReview, hireLegalReview, hireShipReview, hireTradeReview, pollAllocationReview, pollClaimReview, pollLegalReview, pollShipReview, pollTradeReview } from './terac'
+import { blankTeracMcp, hireAllocationReview, hireClaimReview, hireLegalReview, hireShipReview, hireTradeReview, pollAllocationReview, pollClaimReview, pollLegalReview, pollShipReview, pollTradeReview, refreshTeracStatus, type TeracMcpStatus } from './terac'
 import { refreshLinqStatus, sendLinqMessage, sendLinqOnboard } from './linq'
 import { fetchPaySummary, fetchStripeToday, TodayRevenue } from './pay'
 import { extractJson, fetchLlmStatus, llmComplete, rechargeLlmCredits, LlmProvider, LlmStatus } from './llm'
@@ -503,6 +503,7 @@ export interface EngineState {
   paymentLink: string | null
   bugChecks: BugCheck[]
   github: GithubScan
+  teracMcp: TeracMcpStatus
   marketingQueue: MarketingNeed[]
   marketingPick: string | null
   bank: Bank
@@ -1312,6 +1313,7 @@ class Engine {
     credits: blankCredits(),
     dbLive: false,
     github: blankGithubScan(),
+    teracMcp: blankTeracMcp(),
     marketingQueue: [],
     marketingPick: null,
     legalFinance: blankTerac(),
@@ -1670,6 +1672,7 @@ class Engine {
     })
     this.runGithubLoop()
     this.runProductShipLoop()
+    void this.refreshTeracMcp()
 
     // support: check Linq once (our own backend, free). Onboard send is
     // Support-mode "Text subscribe link" — recipient must text the org first.
@@ -2608,6 +2611,19 @@ class Engine {
     } finally {
       this.githubBusy = false
     }
+  }
+
+  private async refreshTeracMcp() {
+    const st = await refreshTeracStatus()
+    if (st.mcp) this.state.teracMcp = st.mcp
+    else this.state.teracMcp = { ...blankTeracMcp(), error: st.live ? 'MCP handshake pending' : 'Terac key missing' }
+    if (st.mcp?.live) {
+      const org = st.mcp.org ? ` — ${st.mcp.org}` : ''
+      this.log('ceo', 'Orchestrator', `Terac MCP connected${org} · ${st.mcp.tools.length} tools`, ['terac mcp'])
+    } else if (st.live) {
+      this.log('ceo', 'Orchestrator', `Terac REST live, MCP not yet — ${this.state.teracMcp.error ?? 'handshake failed'}`, ['terac mcp'])
+    }
+    this.emit()
   }
 
   private async runGithubLoop() {
