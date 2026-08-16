@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { AUDIENCE } from '../data/audience'
-import { engine, DEPT_COLOR, AGENT_DEPT, BOOT_MRR, ENGINEERS, JURY, JURY_QUOTAS, LIVE_ONLY, MAX_SDK_SHIPS, SDK_SHIPS, SHIP_TERAC_ARMED, seedBugChecks, seedLedgers, seedMarket, seedSupport } from './engine'
-import { ALPACA_SYMBOL } from './alpaca'
+import { engine, DEPT_COLOR, AGENT_DEPT, BOOT_MRR, ENGINEERS, JURY, JURY_QUOTAS, LIVE_ONLY, MAX_SDK_SHIPS, SDK_SHIPS, SHIP_TERAC_ARMED, seedBugChecks, seedLedgers, seedMarket, seedSupport, teracVerifyLabel, deskPnl } from './engine'
+import { ALPACA_SYMBOL, shouldHarvest } from './alpaca'
+import { CREDIT_BOOT, CREDIT_LOW, CREDIT_MAX_BUYS, shouldBuyCredits } from './credits'
 
 describe('engine seed state', () => {
   it('live-only mode boots with no fabricated features or history', () => {
@@ -108,6 +109,16 @@ describe('competition + investment seed state', () => {
     expect(SHIP_TERAC_ARMED).toBe(true)
   })
 
+  it('labels a ship job Terac verified / not verified / reviewing', () => {
+    const idle = { status: 'idle' as const, jobId: null, expert: null, quote: null, live: false, dashboardUrl: null, verdict: null, reason: null }
+    expect(teracVerifyLabel({ gate: idle, pr: null })).toBeNull()
+    expect(teracVerifyLabel({ gate: { ...idle, status: 'hiring' }, pr: { number: 1, title: 'x', branch: 'b', file: 'f', sha: 'abc' } })).toBe('reviewing')
+    expect(teracVerifyLabel({ gate: { ...idle, status: 'waiting' }, pr: { number: 1, title: 'x', branch: 'b', file: 'f', sha: 'abc' } })).toBe('reviewing')
+    expect(teracVerifyLabel({ gate: { ...idle, verdict: 'approved' }, pr: { number: 1, title: 'x', branch: 'b', file: 'f', sha: 'abc' } })).toBe('verified')
+    expect(teracVerifyLabel({ gate: { ...idle, verdict: 'rejected' }, pr: { number: 1, title: 'x', branch: 'b', file: 'f', sha: 'abc' } })).toBe('not-verified')
+    expect(teracVerifyLabel({ gate: idle, pr: { number: 1, title: 'x', branch: 'b', file: 'f', sha: 'abc' } })).toBe('not-verified')
+  })
+
   it('ships unique notes under product/ on AliUraish/Buisness_Agent, capped per session', () => {
     expect(MAX_SDK_SHIPS).toBe(4)
     expect(SDK_SHIPS.length).toBe(MAX_SDK_SHIPS)
@@ -170,6 +181,17 @@ describe('market desk seed state', () => {
     for (const a of engine.state.assets) {
       expect(ALPACA_SYMBOL[a.id]).toMatch(/^[A-Z]+\/USD$/)
     }
+  })
+
+  it('harvests a paper position after a 0.3% gain or a 90s hold', () => {
+    expect(shouldHarvest(10_000, 400, 420)).toBe(false)
+    expect(shouldHarvest(30_000, 400, 400.8)).toBe(false)
+    expect(shouldHarvest(30_000, 400, 402)).toBe(true)
+    expect(shouldHarvest(90_000, 400, 399)).toBe(true)
+  })
+
+  it('desk P&L is realized plus open mark', () => {
+    expect(deskPnl([{ qty: 2, cost: 200, assetId: 'eth' }], [{ id: 'eth', price: 120 }], 10)).toBe(50)
   })
 
   it('sim generator round carries an honest trade-confidence gate', () => {
@@ -287,7 +309,8 @@ describe('bank + rails (finance)', () => {
   })
 
   it('Dodo is gone — only Stripe and Whop rails remain', () => {
-    expect(Object.keys(engine.state.railTotals).sort()).toEqual(['Stripe', 'Whop'])
+    expect(Object.keys(engine.state.railTotals).sort()).toEqual(['Alpaca', 'Stripe', 'Whop'])
+    expect(engine.state.tradingRevenue).toBe(0)
     for (const t of engine.state.transactions) {
       expect(['Stripe', 'Whop']).toContain(t.rail)
     }
@@ -295,6 +318,14 @@ describe('bank + rails (finance)', () => {
 
   it('the CFO Agent bills to finance', () => {
     expect(AGENT_DEPT['CFO Agent']).toBe('finance')
+    expect(AGENT_DEPT['Credit Buyer']).toBe('finance')
+  })
+
+  it('Credit Buyer purchases when the mock pool is low', () => {
+    expect(engine.state.credits.balance).toBe(CREDIT_BOOT)
+    expect(shouldBuyCredits({ balance: CREDIT_LOW, bought: 0 })).toBe(true)
+    expect(shouldBuyCredits({ balance: CREDIT_LOW + 1, bought: 0 })).toBe(false)
+    expect(shouldBuyCredits({ balance: 0, bought: CREDIT_MAX_BUYS })).toBe(false)
   })
 })
 
