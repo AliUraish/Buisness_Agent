@@ -29,8 +29,11 @@ npm run dev
    Publisher posts (mock X).
 3. **Product** — GitHub observer for **AliUraish/Buisness_Agent**. Three
    columns: committed features (merged PRs + Add/Enhance commits), pull
-   requests, and the commit log. Those features queue to Audience for
-   posting. Customer bugs from Support (Linq) land in the Bug reports strip.
+   requests, and the commit log. Agents open PRs autonomously; each PR
+   shows **Terac verified** or **Terac not verified**. **Open PR** ships
+   the next catalog item. Needs a token that can write Contents + Pull
+   requests. Those features queue to Audience for posting. Customer bugs
+   from Support (Linq) land in the Bug reports strip.
 4. **Finance** — actual revenue line joining live MRR at the NOW hairline,
    P10–P90 forecast fan, campaign markers with cause→effect underlines,
    five-model forecaster ensemble (bull / bear / churn-hawk / base-rate /
@@ -51,6 +54,9 @@ npm run dev
    and the full percentage split (Payroll & Ops / Taxes reserve / Marketing /
    Investment / Infra & compute / R&D / Cash buffer). The CFO rebalances on
    its own clock with a stated reason, logged to the feed.
+   **Credits**: agents burn a mock pool (18 at boot). **Credit Buyer**
+   purchases a $9 pack from Growth when 8 remain — shown on Finance and Ledger.
+
 5. **Ledger** — deliberately the plainest mode: dense money ledger with running
    balance and an honest TEST MODE chip, per-call LLM spend ledger with the
    kicker ("This company cost $0.36 to operate today") and a spend-by-department
@@ -65,8 +71,10 @@ npm run dev
    desk agents (Prudence, Momentum, Quant, Runway Guardian, Yield Scout)
    each predict 30d ROI per asset, one at a time; the consensus ranking
    picks a winner and the desk deploys treasury (Growth → Crypto) into the
-   highest-ranked asset via a paper order. Positions mark to market live,
-   with unrealized P&L shown honestly — losers in red.
+   highest-ranked asset via a paper order. The desk later sells to take
+   profit (or time-stop), and realized paper P&L is booked into company
+   revenue — labeled Alpaca paper, separate from Stripe. Positions mark
+   to market live, with unrealized P&L shown honestly — losers in red.
 
    **Alpaca is live**: charts use real crypto prices from data.alpaca.markets
    (no keys needed) via the Vite dev proxy. To arm real *paper orders*, add
