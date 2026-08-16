@@ -48,6 +48,7 @@ export interface GithubScan {
   commitsPerDay: number[]
   openPRs: number
   repos: GithubRepoInfo[]
+  canPush?: boolean
 }
 
 export interface MarketingNeed {
@@ -75,6 +76,7 @@ export function blankGithubScan(): GithubScan {
     commitsPerDay: [],
     openPRs: 0,
     repos: [],
+    canPush: false,
   }
 }
 
