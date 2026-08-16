@@ -215,6 +215,9 @@ function LlmLedger() {
       <div className="kicker-row">
         <div className="kicker">
           This company cost <span className="num">${s.spendToday.toFixed(2)}</span> to operate today.
+          {' · '}
+          credits <span className="num">{s.credits.balance}</span>
+          {s.credits.bought > 0 ? ` · Credit Buyer bought ${s.credits.bought} pack${s.credits.bought === 1 ? '' : 's'}` : ''}
         </div>
         <div className="donut-wrap">
           <SpendDonut byDept={byDept} total={totalCost} />
