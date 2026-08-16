@@ -67,7 +67,7 @@
   <div class="wrap">
     <div class="brand" id="brand">Terac · __MODE__ · human in the loop</div>
     <h1 id="title">Should we ship this?</h1>
-    <p class="meta" id="meta">Agents at Bob the Busines opened this change. Open the brief, then submit the same answers in the Terac screener — that is the official form.</p>
+    <p class="meta" id="meta">Agents at Business_Agent opened this for your review. Answer below and submit — the agents proceed on your verdict.</p>
 
     <div class="card" id="brief-card">
       <div class="k" id="brief-k">Feature / commit</div>
@@ -114,10 +114,20 @@
       <p class="q" style="margin-top:16px">One sentence: why.</p>
       <textarea name="claimnotes" placeholder="e.g. The claim matches the merged PR."></textarea>
     </form>
-    <p class="foot">The scored form is Terac’s screener. This page is the briefing the activity task opens.</p>
+    <form class="card" id="form-allocation" hidden>
+      <div class="k">Treasury division review</div>
+      <p class="q">Is this a sensible division of the account?</p>
+      <label class="opt"><input type="radio" name="alloc" value="approve" /> Approve — sensible division</label>
+      <label class="opt"><input type="radio" name="alloc" value="adjust" /> Adjust — something is off</label>
+      <p class="q" style="margin-top:16px">One sentence: why, or what to change.</p>
+      <textarea name="allocnotes" placeholder="e.g. Taxes reserve looks light for this revenue."></textarea>
+    </form>
+    <button id="submit-btn" style="margin-top:14px;padding:10px 22px;border-radius:8px;border:1px solid #111;background:#111;color:#fff;font:inherit;font-size:14px;cursor:pointer">Submit verdict</button>
+    <p class="foot" id="status-line">This is the live form — your answer goes straight to the agents.</p>
   </div>
   <script>
     const q = new URLSearchParams(location.search)
+    let reviewId = q.get('rid') || null
     const set = (id, v) => { const el = document.getElementById(id); if (el && v) el.textContent = v }
     const href = (id, v) => { const el = document.getElementById(id); if (el && v && v !== '#') el.href = v }
     const feature = q.get('feature')
@@ -164,6 +174,65 @@
         codeBlock.style.display = yes ? 'block' : 'none'
       })
     })
+
+    // live wiring: pull the newest pending review if none was linked directly
+    async function hydratePending() {
+      if (reviewId) return
+      try {
+        const r = await fetch('/api/reviews/pending')
+        const rec = await r.json()
+        if (!rec || !rec.id) {
+          document.getElementById('status-line').textContent = 'No review is waiting right now — this page updates when the agents file one.'
+          document.getElementById('submit-btn').disabled = true
+          return
+        }
+        reviewId = rec.id
+        const pl = rec.payload || {}
+        if (pl.feature) set('feature', pl.feature)
+        if (pl.brief || pl.post) set('brief', pl.brief || pl.post)
+        if (pl.pr) set('pr-line', 'PR #' + pl.pr + (pl.prTitle ? ' · ' + pl.prTitle : ''))
+        applyMode(rec.kind)
+      } catch (e) {
+        document.getElementById('status-line').textContent = 'Backend unreachable — is it running on :8787?'
+      }
+    }
+
+    function applyMode(m) {
+      const allocForm = document.getElementById('form-allocation')
+      shipForm.hidden = true; tradeForm.hidden = true; claimForm.hidden = true; allocForm.hidden = true
+      if (m === 'trade') { tradeForm.hidden = false; document.getElementById('title').textContent = 'Should we take this trade?' }
+      else if (m === 'claim') { claimForm.hidden = false; document.getElementById('title').textContent = 'Should we post this?' }
+      else if (m === 'allocation') { allocForm.hidden = false; document.getElementById('title').textContent = 'Is this money divided sensibly?' }
+      else { shipForm.hidden = false }
+    }
+
+    document.getElementById('submit-btn').addEventListener('click', async (e) => {
+      e.preventDefault()
+      if (!reviewId) return
+      const pick = (name) => (document.querySelector('input[name="' + name + '"]:checked') || {}).value || ''
+      const ta = (sel) => (document.querySelector(sel) || {}).value || ''
+      const verdict = pick('ship') || pick('verdict') || pick('alloc') || ''
+      const confidence = pick('conf') || ''
+      const notes = ta('#form-ship textarea') || ta('#form-trade textarea') || ta('#form-claim textarea') || ta('#form-allocation textarea') || ''
+      if (!verdict && !confidence) {
+        document.getElementById('status-line').textContent = 'Pick an answer first.'
+        return
+      }
+      const r = await fetch('/api/reviews/' + reviewId + '/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ verdict, notes, confidence }),
+      })
+      if (r.ok) {
+        document.getElementById('submit-btn').disabled = true
+        document.getElementById('submit-btn').textContent = 'Verdict recorded ✓'
+        document.getElementById('status-line').textContent = 'Done — the agents are proceeding on your answer.'
+      } else {
+        document.getElementById('status-line').textContent = 'Submit failed — try again.'
+      }
+    })
+
+    hydratePending()
   </script>
 </body>
 </html>
