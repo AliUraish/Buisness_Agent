@@ -2,6 +2,12 @@
   "mcpServers": {
     "terac": {
       "url": "https://terac.com/api/mcp"
+    },
+    "render": {
+      "url": "https://mcp.render.com/mcp",
+      "auth": {
+        "CLIENT_ID": "cursor"
+      }
     }
   }
 }
