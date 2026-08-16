@@ -149,7 +149,11 @@ function ShipPipeline() {
     <div className="panel-plain ship-pipe">
       <div className="ledger-head">
         <span>Research → product</span>
-        <span className="dim-label">{job ? STAGE_LABEL[job.stage] : 'watching for a gap'}</span>
+        <span className="dim-label">
+          {s.teracMcp.live ? <span className="testmode live">TERAC MCP</span> : <span className="testmode off">TERAC MCP OFF</span>}
+          {' · '}
+          {job ? STAGE_LABEL[job.stage] : 'watching for a gap'}
+        </span>
       </div>
       {!job && (
         <div className="ship-idle dim">
