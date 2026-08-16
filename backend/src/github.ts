@@ -15,6 +15,11 @@ const GENERIC_SCOPES = new Set(['app', 'core', 'main', 'misc', 'src', 'repo', 'a
 export const GITHUB_WRITE_HINT =
   'Fine-grained PAT on this repo: Contents (read and write) + Pull requests (read and write). Classic PAT: repo (or public_repo if the repo is public).'
 
+// Agents are READ-ONLY on GitHub: every API call funnels through ghreq, and
+// anything that isn't a GET is refused before it reaches the network. No
+// branches, commits, file writes, PRs, or merges — scan/status reads only.
+export const GITHUB_READ_ONLY = true
+
 function canPushFrom(json: any): boolean {
   if (GITHUB_READ_ONLY) return false // writes are refused in ghreq regardless of token scope
   return Boolean(json?.permissions?.push || json?.permissions?.admin)
@@ -230,11 +235,6 @@ export function commitsPerDay(commits: Pick<GithubCommit, 'at'>[], days = 14): n
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms))
 }
-
-// Agents are READ-ONLY on GitHub: every API call funnels through here, and
-// anything that isn't a GET is refused before it reaches the network. No
-// branches, commits, file writes, PRs, or merges — scan/status reads only.
-const GITHUB_READ_ONLY = true
 
 async function ghreq(
   path: string,
