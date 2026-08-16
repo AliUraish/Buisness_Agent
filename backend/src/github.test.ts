@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { commitsPerDay, extractFeatures, featureModule, isSdkShipFile, parseConventional, parsePrNumber, pickDefaultRepo } from './github.ts'
+import { GITHUB_WRITE_HINT, commitsPerDay, extractFeatures, featureModule, isSdkShipFile, parseConventional, parsePrNumber, pickDefaultRepo } from './github.ts'
 
 describe('parseConventional', () => {
   it('reads feat with a PascalCase scope', () => {
@@ -95,6 +95,13 @@ describe('pickDefaultRepo', () => {
     expect(pickDefaultRepo('AliUraish', [{ fullName: 'AliUraish/Agentalize', pushedAt: 8, private: false }], 'AliUraish/PocketX')).toBe(
       'AliUraish/Buisness_Agent',
     )
+  })
+})
+
+describe('GITHUB_WRITE_HINT', () => {
+  it('names Contents + Pull requests for a fine-grained PAT', () => {
+    expect(GITHUB_WRITE_HINT).toMatch(/Contents/)
+    expect(GITHUB_WRITE_HINT).toMatch(/Pull requests/)
   })
 })
 
