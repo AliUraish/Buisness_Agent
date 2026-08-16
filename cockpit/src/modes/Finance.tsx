@@ -287,6 +287,45 @@ function RealRevenueChart() {
   )
 }
 
+// what the Investment desk is doing with the money — live from Alpaca
+function InvestmentStrip() {
+  const s = useEngineTick()
+  const cost = s.positions.reduce((a, p) => a + p.cost, 0)
+  const market = s.positions.reduce((a, p) => {
+    const asset = s.assets.find((x) => x.id === p.assetId)
+    return a + (asset ? p.qty * asset.price : p.cost)
+  }, 0)
+  const uPnl = market - cost
+  const pnlColor = (v: number) => (v >= 0 ? 'var(--green)' : 'var(--red)')
+  return (
+    <div className="panel-plain invest-strip num">
+      <span className="invest-title">
+        Investment desk
+        {s.ordersLive && s.marketFeed === 'live' ? (
+          <span className="testmode live">ALPACA PAPER · LIVE</span>
+        ) : (
+          <span className="testmode">SIM FILLS</span>
+        )}
+      </span>
+      <span className="sstat"><b>{s.positions.length}</b> open positions</span>
+      <span className="sstat"><b>${cost.toFixed(0)}</b> deployed</span>
+      <span className="sstat"><b>${market.toFixed(2)}</b> market</span>
+      <span className="sstat">
+        <b style={{ color: pnlColor(uPnl) }}>{uPnl >= 0 ? '+' : ''}${uPnl.toFixed(2)}</b> unrealized
+      </span>
+      <span className="sstat">
+        <b style={{ color: pnlColor(s.tradingRevenue) }}>{s.tradingRevenue >= 0 ? '+' : ''}${s.tradingRevenue.toFixed(2)}</b> realized
+      </span>
+      {s.paperEquity != null && (
+        <span className="sstat"><b>${s.paperEquity.toLocaleString(undefined, { maximumFractionDigits: 0 })}</b> paper equity</span>
+      )}
+      <span className="dim-label" style={{ marginLeft: 'auto' }}>
+        trading gains are paper-account results — kept separate from Stripe revenue
+      </span>
+    </div>
+  )
+}
+
 function ForecasterRow() {
   const s = useEngineTick()
   const fs = s.forecasters
@@ -303,7 +342,7 @@ function ForecasterRow() {
       <div className={'gauge' + (split ? ' split' : '')}>
         <div className="gauge-track">
           {fs.map((f) => (
-            <i key={f.model} style={{ left: `${6 + ((f.p50 - lo) / span) * 88}%` }} title={`${f.model} $${f.p50.toLocaleString()}`} />
+            <i key={f.model + f.persona} style={{ left: `${6 + ((f.p50 - lo) / span) * 88}%` }} title={`${f.model} $${f.p50.toLocaleString()}`} />
           ))}
         </div>
         <span className="gauge-label num">
@@ -312,7 +351,7 @@ function ForecasterRow() {
       </div>
       <div className="fcast-row">
         {fs.map((f) => (
-          <div className="fcast-card" key={f.model}>
+          <div className="fcast-card" key={f.model + f.persona}>
             <div className="fcast-head">
               <span className="fcast-mono">{f.mono}</span>
               <span>
@@ -341,7 +380,7 @@ function Aggregation() {
     <div className="agg mono">
       <div className="agg-head">confidence-weighted merge</div>
       {fs.map((f) => (
-        <div className="agg-line" key={f.model}>
+        <div className="agg-line" key={f.model + f.persona}>
           <span>
             {(f.confidence / wsum).toFixed(2)} × ${f.p50.toLocaleString()}
           </span>
@@ -629,6 +668,7 @@ export default function Finance() {
         {LIVE_ONLY ? <RealRevenueChart /> : <ForecastChart />}
       </div>
       <ForecasterRow />
+      <InvestmentStrip />
       <div className="fin-bottom three">
         <Aggregation />
         <Report />
