@@ -173,7 +173,7 @@ function DeskPanel() {
           {round.status === 'predicting'
             ? `${done}/5 agents in`
             : round.terac.status === 'waiting' || round.terac.status === 'hiring'
-              ? 'ranked — waiting on Terac form'
+              ? 'ranked — waiting on the /review form'
               : round.status === 'ranked'
                 ? 'ranked — deploying'
                 : `executed · ${clock(round.at)}`}
@@ -240,7 +240,7 @@ function DeskPanel() {
             ) : (
               <>
                 → {round.terac.status === 'waiting' || round.terac.status === 'hiring'
-                  ? `holding $${round.amount} ${bySym(round.winner!).symbol} until the Terac form is filled`
+                  ? `holding $${round.amount} ${bySym(round.winner!).symbol} until the /review form is filled`
                   : `deploying $${round.amount} into ${bySym(round.winner!).symbol} — highest consensus ROI`}
               </>
             )}
@@ -260,8 +260,8 @@ function TradeGateStrip({ gate }: { gate: TradeGate }) {
       {gate.live ? <span className="testmode live">TERAC LIVE</span> : <span className="testmode off">TERAC OFF</span>}
       {s.teracMcp.live ? <span className="testmode live">MCP</span> : <span className="testmode off">MCP OFF</span>}
       <span className="terac-kicker">Terac</span>
-      {gate.status === 'hiring' && <span className="dim">opening the Terac form…</span>}
-      {gate.status === 'waiting' && <span className="dim">holding the fill — waiting on the Terac form</span>}
+      {gate.status === 'hiring' && <span className="dim">opening the review form…</span>}
+      {gate.status === 'waiting' && <span className="dim">holding the fill — waiting on the /review form</span>}
       {gate.status === 'error' && <span className="dim">no form yet — {gate.note ?? 'holding the fill'}</span>}
       {(gate.status === 'expert' || gate.status === 'desk') && gate.confidence != null && (
         <>

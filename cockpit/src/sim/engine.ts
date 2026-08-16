@@ -2956,77 +2956,48 @@ class Engine {
       job.stage = 'blocked'
       return
     }
-    job.stage = 'hiring-verify'
-    job.gate.status = 'hiring'
-    this.setNode('terac', 'acting', 'hiring research→PR verifier…')
+    // Terac is down — the human verifier answers on the LOCAL form at /review.
+    job.stage = 'awaiting-verify'
+    job.gate.status = 'waiting'
+    job.gate.live = true
+    job.gate.jobId = null
+    job.gate.quote = null
+    job.gate.dashboardUrl = null
+    job.gate.reason = 'waiting on the /review form'
+    this.setNode('terac', 'acting', 'waiting on the review form…')
     this.fire('risk>terac', DEPT_COLOR.alerts)
-    this.log('alerts', 'Terac Liaison', `Hiring a human to verify research → PR #${pr.number} (${job.feature})`, [
-      'terac.com',
-      `PR #${pr.number}`,
-    ])
+    this.log('alerts', 'Review Desk', `PR #${pr.number} (${job.feature}) routed to the review form — open /review to verify`, ['/review', `PR #${pr.number}`])
     this.emit()
 
-    const hired = await hireShipReview({
-      kind: 'verify',
+    const r = await this.localReview('ship', {
       feature: job.feature,
-      rival: job.rival,
-      brief: job.brief,
-      prTitle: pr.title,
-      prNumber: pr.number,
-      files: pr.file,
+      brief: `Rival: ${job.rival}. ${job.brief}\nPR #${pr.number}: ${pr.title} (${pr.file})`,
     })
-    job.gate.live = hired.live
-    job.gate.jobId = hired.jobId || null
-    job.gate.quote = hired.quote
-    job.gate.dashboardUrl = hired.dashboardUrl
-    job.gate.reason = hired.reason
-
-    if (hired.verdict === 'error') {
+    if (!r) {
       job.stage = 'pr-open'
       job.gate.status = 'error'
-      job.gate.verdict = null
-      this.log('alerts', 'Terac Liaison', `PR #${pr.number} opened — Terac not verified (${hired.reason.slice(0, 80)})`, [
-        hired.live ? 'hire failed' : 'needs key',
-      ])
-      this.patchIntel(job, `PR #${pr.number} open — Terac not verified`)
+      job.gate.reason = 'No form answer in 2 minutes — PR stays open, not verified'
+      this.log('alerts', 'Review Desk', `PR #${pr.number} still open — no form answer`, ['timeout'])
+      this.patchIntel(job, `PR #${pr.number} open — not human-verified`)
       this.ensureShipFeature(job)
       this.setNode('terac', 'idle')
       this.emit()
       return
     }
-
-    job.stage = 'awaiting-verify'
-    job.gate.status = 'waiting'
-    this.log('alerts', 'Terac Liaison', `Opportunity live — does research → PR #${pr.number} hold up?`, [hired.jobId, 'live'])
-    this.setNode('terac', 'acting', 'waiting on verifier…')
-    this.emit()
-
-    const v = await this.waitForShipVerdict(hired.jobId)
-    job.gate.expert = v.expert
-    job.gate.reason = v.reason
-    if (v.verdict === 'approved') {
+    job.gate.expert = 'human (form)'
+    job.gate.reason = r.notes || `${r.verdict} via the review form`
+    if (/approve|ship/i.test(r.verdict)) {
       job.gate.status = 'approved'
       job.gate.verdict = 'approved'
-      this.log('alerts', 'Terac Liaison', `${v.expert ?? 'Terac expert'}: Terac verified PR #${pr.number} — ${v.reason.slice(0, 100)}`, [
-        'verified',
-      ])
-      this.patchIntel(job, `PR #${pr.number} Terac verified — shipping`)
+      this.log('alerts', 'Review Desk', `Human verified PR #${pr.number} — ${job.gate.reason.slice(0, 100)}`, ['verified'])
+      this.patchIntel(job, `PR #${pr.number} human-verified — shipping`)
       this.ensureShipFeature(job)
-    } else if (v.verdict === 'rejected') {
+    } else {
       job.gate.status = 'revised'
       job.gate.verdict = 'rejected'
       job.stage = 'pr-open'
-      this.log('alerts', 'Terac Liaison', `${v.expert ?? 'Terac expert'}: Terac not verified PR #${pr.number} — ${v.reason.slice(0, 100)}`, [
-        'not-verified',
-      ])
-      this.patchIntel(job, `PR #${pr.number} Terac not verified`)
-      this.ensureShipFeature(job)
-    } else {
-      job.stage = 'pr-open'
-      job.gate.status = 'error'
-      job.gate.reason = v.reason
-      this.log('alerts', 'Terac Liaison', `PR #${pr.number} still open — Terac not verified. ${v.reason}`, ['error'])
-      this.patchIntel(job, `PR #${pr.number} Terac not verified`)
+      this.log('alerts', 'Review Desk', `Human held PR #${pr.number} — ${job.gate.reason.slice(0, 100)}`, ['not-verified'])
+      this.patchIntel(job, `PR #${pr.number} held by human review`)
       this.ensureShipFeature(job)
     }
     this.setNode('terac', 'idle')
@@ -3127,23 +3098,6 @@ class Engine {
       if (job.pr?.number || job.stage === 'shipped') this.shipsThisSession++
     })
     return true
-  }
-
-  private async waitForShipVerdict(jobId: string): Promise<{
-    verdict: 'approved' | 'rejected' | 'waiting' | 'error'
-    reason: string
-    expert: string | null
-  }> {
-    // The human is the gate. Poll until they answer; do not auto-approve.
-    for (;;) {
-      await this.sleep(12_000)
-      try {
-        const v = await pollShipReview(jobId)
-        if (v.verdict !== 'waiting') return v
-      } catch (e) {
-        console.error('[engine] ship poll failed:', e)
-      }
-    }
   }
 
   // ── Real agent brains ──────────────────────────────────────────
@@ -3348,19 +3302,6 @@ class Engine {
     gate.note = `${desk.note} · no human answer on the form`
     this.emit()
   }
-> {
-    // The human is the gate. Poll until they submit the form; do not fill early.
-    for (;;) {
-      await this.sleep(12_000)
-      try {
-        const v = await pollTradeReview(jobId)
-        if (v.status !== 'waiting') return v
-      } catch (e) {
-        console.error('[engine] trade poll failed:', e)
-      }
-    }
-  }
-
   private async marketRound() {
     if (this.deskBusy) return
     this.deskBusy = true
@@ -3453,11 +3394,11 @@ class Engine {
     await this.runTradeGate(round, winAsset)
     const conf = round.terac.confidence
     if (round.terac.status !== 'expert') {
-      this.log('finance', 'Market Desk', `Held ${winAsset.symbol} — waiting on the Terac form`, [round.terac.note ?? 'no form'])
+      this.log('finance', 'Market Desk', `Held ${winAsset.symbol} — waiting on the /review form`, [round.terac.note ?? 'no form'])
       return
     }
     if (conf == null || conf < 50) {
-      this.log('finance', 'Market Desk', `Terac form filled — ${conf ?? 0}% confidence, skipping the fill`, ['low'])
+      this.log('finance', 'Market Desk', `Review form filled — ${conf ?? 0}% confidence, skipping the fill`, ['low'])
       return
     }
 
@@ -3510,7 +3451,7 @@ class Engine {
     if (this.state.positions.length > 12) this.state.positions.shift()
     const confStr =
       round.terac.confidence != null
-        ? ` · confidence ${round.terac.confidence}% (${round.terac.status === 'expert' ? 'Terac form' : 'prior form'})`
+        ? ` · confidence ${round.terac.confidence}% (${round.terac.status === 'expert' ? 'review form' : 'prior form'})`
         : ''
     this.log(
       'finance',

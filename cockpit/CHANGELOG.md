@@ -2,6 +2,18 @@
 
 All notable changes to Cockpit are documented here.
 
+## [0.28.0.0] - 2026-08-15
+
+### Changed
+- All human gates now use the LOCAL review form at `/review` instead of Terac
+  (Terac auth is broken): treasury division, legal-finance button, trade
+  confidence, marketing claim check, and PR ship verification. The form
+  submits for real — pending review hydrates on load, verdict posts back,
+  and the waiting gate picks it up within 5s.
+- Trading bankroll capped at a real **$20** (open positions at cost), not the
+  $100k Alpaca paper balance. Fills are $3–6 each; deploys skip once the cap
+  is reached.
+
 ## [0.27.0.0] - 2026-08-15
 
 ### Added
