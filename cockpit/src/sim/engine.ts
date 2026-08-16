@@ -6,7 +6,7 @@
 import { AUDIENCE } from '../data/audience'
 import { mulberry32 } from './rng'
 import { fetchBars, fetchLatestPrices, fetchPaperAccount, submitPaperOrder, submitPaperSell, shouldHarvest, ORDERS_ENABLED } from './alpaca'
-import { blankTeracMcp, hireAllocationReview, hireClaimReview, hireLegalReview, hireShipReview, hireTradeReview, pollAllocationReview, pollClaimReview, pollLegalReview, pollShipReview, pollTradeReview, refreshTeracStatus, type TeracMcpStatus } from './terac'
+import { blankTeracMcp, refreshTeracStatus, type TeracMcpStatus } from './terac'
 import { refreshLinqStatus, sendLinqMessage, sendLinqOnboard } from './linq'
 import { fetchPaySummary, fetchStripeToday, TodayRevenue } from './pay'
 import { extractJson, fetchLlmStatus, llmComplete, rechargeLlmCredits, LlmProvider, LlmStatus } from './llm'
@@ -1331,6 +1331,7 @@ class Engine {
   // ONE Terac hire per session across ALL gates — the human budget is tiny
   // ($4 on the account) and every study costs ~$5+. Attempts count too.
   private teracHiresUsed = 0
+  private readonly BANKROLL_CAP = 20 // max $ of open positions at cost — real $20, not the $100k paper account
   private readonly TERAC_HIRE_BUDGET = 1
   private linqSendDone = false
   private lastExpertReading: { confidence: number; expert: string | null; note: string; at: number } | null = null
@@ -2276,87 +2277,41 @@ class Engine {
     this.emit()
   }
 
-  // Finance-mode button: hire a Terac human for legal finances. The page is /legal.
+  // Finance-mode button: legal-finance review via the LOCAL form at /review (Terac is down).
   hireLegalFinance = async (): Promise<void> => {
     const job = this.state.legalFinance
     if (job.status === 'hiring' || job.status === 'waiting') return
-    if (this.teracHiresUsed >= this.TERAC_HIRE_BUDGET) {
-      job.status = 'error'
-      job.verdict = 'Session hire budget (1) already used'
-      this.log('alerts', 'Terac Liaison', 'Legal-finance hire skipped — budget already used', ['budget'])
-      this.emit()
-      return
-    }
-    this.teracHiresUsed++
     const bank = this.state.bank
     const rev = this.state.stripeToday
-    job.status = 'hiring'
-    job.verdict = null
+    job.status = 'waiting'
+    job.verdict = 'waiting on the /review form'
     job.jobId = null
     job.expert = null
     job.dashboardUrl = null
     job.title = 'Legal finances'
-    this.setNode('terac', 'acting', 'hiring legal-finance reviewer…')
-    this.log('alerts', 'Terac Liaison', 'Hiring a human to review legal finances', ['terac.com', '/legal'])
+    job.live = true
+    this.setNode('terac', 'acting', 'waiting on the review form…')
+    this.log('alerts', 'Review Desk', 'Legal finances sent to the review form — open /review to answer', ['/review'])
     this.emit()
-    try {
-      const hired = await hireLegalReview({
-        bankName: bank.name,
-        balance: bank.balance,
-        alloc: bank.alloc,
-        rationale: bank.note ?? 'CFO division',
-        revenueToday: rev?.live ? `$${(rev.grossCents / 100).toFixed(2)} Stripe ${rev.mode}` : 'Stripe off',
-      })
-      job.live = hired.live
-      job.jobId = hired.jobId || null
-      job.quote = hired.quote
-      job.dashboardUrl = hired.dashboardUrl
-      job.verdict = hired.reason
-      if (hired.verdict === 'error' || !hired.jobId) {
-        if (/412|401|insufficient balance|invalid or expired/i.test(hired.reason)) this.teracHiresUsed--
-        job.status = 'error'
-        this.log('alerts', 'Terac Liaison', `Legal-finance hire failed — ${hired.reason.slice(0, 100)}`, ['no hire'])
-        this.setNode('terac', 'idle')
-        this.emit()
-        return
-      }
-      job.status = 'waiting'
-      this.log('alerts', 'Terac Liaison', `Legal finances sent to Terac — waiting on a human`, [hired.jobId, 'live'])
-      this.setNode('terac', 'acting', 'waiting on legal-finance reviewer…')
-      this.emit()
-      let polls = 0
-      const t = setInterval(() => {
-        polls++
-        if (polls > 20 || !job.jobId || job.status !== 'waiting') {
-          clearInterval(t)
-          return
-        }
-        void pollLegalReview(job.jobId)
-          .then((v) => {
-            if (v.verdict === 'waiting') return
-            job.expert = v.expert
-            job.verdict = v.reason
-            job.status = v.verdict === 'approved' ? 'approved' : 'revised'
-            this.log(
-              'alerts',
-              'Terac Liaison',
-              `${v.expert ?? 'Human'} ${v.verdict === 'approved' ? 'approved' : 'flagged'} legal finances — ${v.reason.slice(0, 90)}`,
-              [v.verdict],
-            )
-            this.setNode('terac', 'idle')
-            clearInterval(t)
-            this.emit()
-          })
-          .catch(() => undefined)
-      }, 12_000)
-      this.timers.push(t as unknown as ReturnType<typeof setTimeout>)
-    } catch (e) {
+    const rows = bank.alloc.map((a) => `${a.label}: ${a.pct}%`).join(' · ')
+    const r = await this.localReview('allocation', {
+      feature: `Legal finances — ${bank.name} ($${bank.balance.toLocaleString()})`,
+      brief: `${rows}\nRevenue today: ${rev?.live ? `$${(rev.grossCents / 100).toFixed(2)} Stripe ${rev.mode}` : 'Stripe off'}\nCFO rationale: ${bank.note ?? 'CFO division'}`,
+    })
+    this.setNode('terac', 'idle')
+    if (!r) {
       job.status = 'error'
-      job.verdict = (e instanceof Error ? e.message : String(e)).slice(0, 180)
-      this.log('alerts', 'Terac Liaison', `Legal-finance hire failed — ${job.verdict}`, ['error'])
-      this.setNode('terac', 'idle')
+      job.verdict = 'No form answer in 2 minutes — try the button again'
+      this.log('alerts', 'Review Desk', 'Legal-finance review timed out — no form answer', ['timeout'])
       this.emit()
+      return
     }
+    const approved = /approve/i.test(r.verdict)
+    job.expert = 'human (form)'
+    job.verdict = r.notes || (approved ? 'approved via the review form' : 'flagged via the review form')
+    job.status = approved ? 'approved' : 'revised'
+    this.log('alerts', 'Review Desk', `Human ${approved ? 'approved' : 'flagged'} legal finances${r.notes ? ` — ${r.notes.slice(0, 90)}` : ''}`, [job.status])
+    this.emit()
   }
 
   // ── Support: inbound texts triaged, drafted, QA'd, and answered ──
@@ -3393,12 +3348,7 @@ class Engine {
     gate.note = `${desk.note} · no human answer on the form`
     this.emit()
   }
-  private async waitForTradeVerdict(jobId: string): Promise<{
-    status: 'done' | 'waiting' | 'error'
-    confidence: number | null
-    reason: string
-    expert: string | null
-  }> {
+> {
     // The human is the gate. Poll until they submit the form; do not fill early.
     for (;;) {
       await this.sleep(12_000)
@@ -3409,36 +3359,6 @@ class Engine {
         console.error('[engine] trade poll failed:', e)
       }
     }
-  }
-
-  private startTradePoller(round: MarketRound) {
-    if (this.tradePoll) clearInterval(this.tradePoll)
-    let polls = 0
-    // sparing: one poll every 30s, give up after 10 minutes
-    this.tradePoll = setInterval(() => {
-      polls++
-      if (polls > 20 || !round.terac.jobId || round.terac.status === 'expert') {
-        if (this.tradePoll) clearInterval(this.tradePoll)
-        this.tradePoll = null
-        return
-      }
-      void pollTradeReview(round.terac.jobId)
-        .then((v) => {
-          if (v.status !== 'done' || v.confidence == null) return
-          round.terac.status = 'expert'
-          round.terac.confidence = v.confidence
-          round.terac.expert = v.expert
-          round.terac.note = v.reason
-          this.lastExpertReading = { confidence: v.confidence, expert: v.expert, note: v.reason, at: Date.now() }
-          this.log('alerts', 'Terac Liaison', `Expert confidence landed after the fill — ${v.confidence}%: ${v.reason.slice(0, 100)}`, ['expert'])
-          if (this.tradePoll) {
-            clearInterval(this.tradePoll)
-            this.tradePoll = null
-          }
-          this.emit()
-        })
-        .catch((e) => console.error('[terac] trade poll failed:', e))
-    }, 30000)
   }
 
   private async marketRound() {
@@ -3452,7 +3372,8 @@ class Engine {
       preds: COMMITTEE.map((c) => ({ agent: c.agent, mono: c.mono, persona: c.persona, roi: null })),
       consensus: null,
       winner: null,
-      amount: [150, 200, 250, 300][Math.floor(Math.random() * 4)],
+      // real money now — $20 total bankroll, so fills are $3–6 (Alpaca crypto min notional is $1)
+      amount: [3, 4, 5, 6][Math.floor(Math.random() * 4)],
       status: 'predicting',
       orderId: null,
       entryPrice: null,
@@ -3544,11 +3465,18 @@ class Engine {
     // so treasury allocations still sum exactly to cash
     const growth = this.state.treasury.alloc.find((a) => a.label === 'Growth')
     const crypto = this.state.treasury.alloc.find((a) => a.label === 'Crypto')
-    if (!growth || !crypto || growth.amount < 50) {
+    if (!growth || !crypto || growth.amount < 1) {
       this.log('finance', 'Market Desk', 'Skipped deploy — growth allocation exhausted')
       return
     }
-    const amount = Math.min(round.amount, growth.amount)
+    // hard bankroll: at most $20 of open positions at cost, ever
+    const openCost = this.state.positions.reduce((sum, pos) => sum + pos.cost, 0)
+    const headroom = this.BANKROLL_CAP - openCost
+    if (headroom < 1) {
+      this.log('finance', 'Market Desk', `Skipped deploy — $${this.BANKROLL_CAP} bankroll cap reached ($${openCost.toFixed(2)} deployed)`, ['bankroll cap'])
+      return
+    }
+    const amount = Math.min(round.amount, growth.amount, Math.floor(headroom))
     growth.amount -= amount
     crypto.amount += amount
     round.entryPrice = winAsset.price
@@ -3894,94 +3822,42 @@ class Engine {
   }
 
   private async runTeracGate(feature: string, camp: number, winner: DraftPost, tally: number) {
-    const S = this.sleep.bind(this)
     const sim = this.state.campaignSim
     const cluster = VOICE_CLUSTER[winner.agent] ?? 'infra'
     const expert = TERAC_EXPERTS[cluster]
     sim.stage = 'reviewing'
-    if (this.teracHiresUsed >= this.TERAC_HIRE_BUDGET) {
-      sim.terac = {
-        status: 'error',
-        jobId: null,
-        expert: null,
-        title: expert.title,
-        quote: null,
-        verdict: 'Session hire budget (1) already used — publishing without the human gate',
-        live: false,
-        dashboardUrl: null,
-      }
-      this.log('alerts', 'Terac Liaison', 'Hire budget (1/session) already used — publishing without the human gate', ['budget'])
-      this.emit()
-      await this.publishWinner(feature, camp, winner, tally)
-      return
-    }
-    this.teracHiresUsed++
+    // Terac is down — the human gate is the LOCAL review form at /review.
     sim.terac = {
-      status: 'hiring',
+      status: 'waiting',
       jobId: null,
       expert: null,
       title: expert.title,
       quote: null,
-      verdict: null,
-      live: false,
+      verdict: 'waiting on the /review form',
+      live: true,
       dashboardUrl: null,
     }
-    this.setNode('risk', 'acting', 'routing to Terac…')
+    this.setNode('risk', 'acting', 'routing to review form…')
     this.fire('ceo>risk', DEPT_COLOR.alerts)
-    this.log('alerts', 'Risk Sentinel', `Winning draft routed to Terac — ${expert.title}`, ['terac.com'])
-    this.emit()
-    await S(800)
-    this.setNode('risk', 'idle')
-    this.setNode('terac', 'acting', 'opening opportunity…')
-    this.fire('risk>terac', DEPT_COLOR.alerts)
+    this.log('alerts', 'Risk Sentinel', `Winning draft routed to the review form — open /review to answer`, ['/review'])
     this.emit()
 
-    try {
-      const hired = await hireClaimReview({
+    const r = await this.localReview(
+      'claim',
+      {
         feature,
-        post: winner.text ?? WRITER_COPY[winner.agent](feature),
-        voice: winner.voice,
-        clusterTitle: expert.title,
-      })
-      sim.terac.live = hired.live
-      sim.terac.jobId = hired.jobId || null
-      sim.terac.quote = hired.quote
-      sim.terac.title = hired.title
-      sim.terac.dashboardUrl = hired.dashboardUrl
-      sim.terac.verdict = hired.reason
-      if (hired.verdict === 'error') {
-        sim.terac.status = 'error'
-        this.log('alerts', 'Terac Liaison', hired.reason, ['needs key'])
-        this.setNode('terac', 'idle')
-        this.emit()
-        await this.publishWinner(feature, camp, winner, tally)
-        return
-      }
-      sim.terac.status = 'waiting'
-      this.log('alerts', 'Terac Liaison', `Opportunity live — ${hired.reason}`, [hired.jobId, 'live'])
-      this.setNode('terac', 'acting', 'waiting on expert…')
-      this.emit()
-
-      const first = await this.awaitTeracVerdict(hired.jobId, 3)
-      if (first.verdict === 'waiting') {
-        this.pendingPublish = { feature, camp, winner, tally }
-        this.startTeracPoller(hired.jobId)
-        return
-      }
-      if (first.verdict === 'approved' || first.verdict === 'revised') {
-        this.applyTeracVerdict(winner, feature, first.verdict, first.reason, first.expert)
-      } else {
-        sim.terac.status = 'error'
-        sim.terac.verdict = first.reason
-        this.log('alerts', 'Terac Liaison', first.reason, ['error'])
-        this.setNode('terac', 'idle')
-        this.emit()
-      }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
+        brief: `Draft post (${winner.voice}): ${winner.text ?? WRITER_COPY[winner.agent](feature)}`,
+      },
+      90_000,
+    )
+    this.setNode('risk', 'idle')
+    if (r) {
+      const verdict = /approve/i.test(r.verdict) ? ('approved' as const) : ('revised' as const)
+      this.applyTeracVerdict(winner, feature, verdict, r.notes || `${r.verdict} via the review form`, 'human (form)')
+    } else {
       sim.terac.status = 'error'
-      sim.terac.verdict = msg.slice(0, 180)
-      this.log('alerts', 'Terac Liaison', `Hire failed — ${sim.terac.verdict}`, ['error'])
+      sim.terac.verdict = 'No form answer in 90s — publishing without the human gate'
+      this.log('alerts', 'Review Desk', 'No form answer — publishing without the human gate', ['timeout'])
       this.setNode('terac', 'idle')
       this.emit()
     }
@@ -4007,46 +3883,6 @@ class Engine {
     this.log('alerts', 'Terac Liaison', `${expert ?? 'Terac expert'}: ${reason}`, [sim.terac.status])
     this.setNode('terac', 'idle')
     this.emit()
-  }
-
-  private async awaitTeracVerdict(jobId: string, attempts: number) {
-    for (let i = 0; i < attempts; i++) {
-      await this.sleep(12_000)
-      try {
-        const v = await pollClaimReview(jobId)
-        if (v.verdict !== 'waiting') return v
-      } catch (e) {
-        console.error('[terac] poll failed:', e)
-      }
-    }
-    return { verdict: 'waiting' as const, reason: 'Waiting on a Terac expert.', expert: null }
-  }
-
-  private startTeracPoller(jobId: string) {
-    if (this.teracPoll) clearInterval(this.teracPoll)
-    this.teracPoll = setInterval(() => {
-      void pollClaimReview(jobId)
-        .then((v) => {
-          if (v.verdict === 'waiting' || !this.pendingPublish) return
-          if (this.teracPoll) clearInterval(this.teracPoll)
-          this.teracPoll = null
-          const pending = this.pendingPublish
-          this.pendingPublish = null
-          if (v.verdict === 'approved' || v.verdict === 'revised') {
-            this.applyTeracVerdict(pending.winner, pending.feature, v.verdict, v.reason, v.expert)
-          } else {
-            const sim = this.state.campaignSim
-            sim.terac.status = 'error'
-            sim.terac.verdict = v.reason
-            this.log('alerts', 'Terac Liaison', v.reason, ['error'])
-            this.setNode('terac', 'idle')
-            this.emit()
-          }
-          void this.publishWinner(pending.feature, pending.camp, pending.winner, pending.tally)
-        })
-        .catch((e) => console.error('[terac] background poll failed:', e))
-    }, 20_000)
-    this.timers.push(this.teracPoll as unknown as ReturnType<typeof setTimeout>)
   }
 
   private async publishWinner(feature: string, camp: number, winner: DraftPost, tally: number) {
