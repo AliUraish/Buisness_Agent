@@ -18,6 +18,7 @@ Listens on `http://127.0.0.1:8787`. Keys come from the workspace `../.env`.
 - `GET /api/linq/status` — `{ live, paymentLink }`
 - `POST /api/linq/send` — text the test phone
 - `POST /api/linq/onboard` — text the Stripe subscribe link (`STRIPE_PAYMENT_LINK`)
+- `GET /api/terac/status` — `{ live, mcp }` (`mcp` is the Terac MCP handshake)
 - `POST /api/terac/hires` — create + launch a 1-person claim-review opportunity
 - `POST /api/terac/trades` — crypto confidence review (High/Medium/Low)
 - `GET /api/terac/trades/:jobId` — poll confidence
