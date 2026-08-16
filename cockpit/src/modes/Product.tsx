@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { BugCheck, Feature } from '../sim/engine'
+import { BugCheck, Feature, ShipJob, engine, teracVerifyLabel } from '../sim/engine'
 import { GithubCommit, GithubPr } from '../sim/github'
 import { useEngineTick } from '../App'
 
@@ -28,15 +28,27 @@ function subject(message: string) {
   return (message.split('\n')[0] ?? '').slice(0, 88)
 }
 
+function TeracVerifyMark({ job }: { job: Pick<ShipJob, 'gate' | 'pr'> }) {
+  const v = teracVerifyLabel(job)
+  if (v === 'verified') return <span className="v-confirmed">Terac verified</span>
+  if (v === 'reviewing') return <span className="v-reviewing">Terac reviewing</span>
+  if (v === 'not-verified') return <span className="v-notrepro">Terac not verified</span>
+  return null
+}
+
 function GithubBanner() {
   const s = useEngineTick()
   const g = s.github
   const now = useNow(1000)
   const job = [...s.shipJobs].reverse().find((j) => j.stage !== 'shipped' && j.stage !== 'rejected' && j.stage !== 'blocked')
+  const busy = s.shipJobs.some((j) =>
+    j.stage === 'researching' || j.stage === 'briefed' || j.stage === 'building' || j.stage === 'hiring-verify' || j.stage === 'awaiting-verify',
+  )
   return (
     <div className="ship-banner open gh-banner">
       <div className="ship-inner">
         {g.live ? <span className="testmode live">GITHUB LIVE</span> : <span className="testmode off">GITHUB OFF</span>}
+        {g.live && (g.canPush ? <span className="testmode live">CAN OPEN PRS</span> : <span className="testmode off">READ ONLY</span>)}
         <span className="ship-title">
           {g.live ? (
             <>
@@ -57,7 +69,20 @@ function GithubBanner() {
           )}
         </span>
         <span className="ship-ago num">· scanned {ago(g.lastScanAt, now)}</span>
+        <button
+          className="start-pill"
+          type="button"
+          disabled={!g.live || !g.canPush || busy}
+          onClick={() => engine.shipNext()}
+        >
+          Open PR
+        </button>
       </div>
+      {g.live && !g.canPush && (
+        <div className="gh-perm-hint">
+          Token cannot open PRs. Fine-grained PAT on this repo: Contents (read and write) + Pull requests (read and write). Classic PAT: repo.
+        </div>
+      )}
     </div>
   )
 }
@@ -214,6 +239,7 @@ function FeatureCol() {
 }
 
 function PrCol({ prs }: { prs: GithubPr[] }) {
+  const s = useEngineTick()
   return (
     <div className="kcol">
       <div className="kcol-head">
@@ -221,20 +247,29 @@ function PrCol({ prs }: { prs: GithubPr[] }) {
       </div>
       <div className="kcol-cards">
         {prs.length === 0 && <div className="gh-empty">No pull requests on this repo</div>}
-        {prs.map((p) => (
-          <a className="kcard gh-link" key={p.number} href={p.url} target="_blank" rel="noreferrer">
-            <div className="kcard-name">
-              <i
-                className="kdot"
-                style={{ background: p.merged ? 'var(--violet)' : p.state === 'open' ? 'var(--teal)' : 'var(--ink-3)' }}
-              />
-              #{p.number} {p.title}
-            </div>
-            <div className="kcard-summary">
-              {p.author} · {p.merged ? 'merged' : p.state}
-            </div>
-          </a>
-        ))}
+        {prs.map((p) => {
+          const job = [...s.shipJobs].reverse().find((j) => j.pr?.number === p.number)
+          return (
+            <a className="kcard gh-link" key={p.number} href={p.url} target="_blank" rel="noreferrer">
+              <div className="kcard-name">
+                <i
+                  className="kdot"
+                  style={{ background: p.merged ? 'var(--violet)' : p.state === 'open' ? 'var(--teal)' : 'var(--ink-3)' }}
+                />
+                #{p.number} {p.title}
+              </div>
+              <div className="kcard-summary">
+                {p.author} · {p.merged ? 'merged' : p.state}
+                {job ? (
+                  <>
+                    {' · '}
+                    <TeracVerifyMark job={job} />
+                  </>
+                ) : null}
+              </div>
+            </a>
+          )
+        })}
       </div>
     </div>
   )
@@ -351,6 +386,7 @@ function CompetitionShipStrip() {
             ) : (
               <span className="dim">{job.stage.replace(/-/g, ' ')}</span>
             )}
+            <TeracVerifyMark job={job} />
             <span className="chip">{job.pr?.file ?? job.file}</span>
             {job.pr && <span className="chip num">{job.pr.sha}</span>}
             {job.pr?.url && (
