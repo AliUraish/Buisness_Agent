@@ -5,12 +5,18 @@ import { COMPANY_NAME, GITHUB_REPO, GITHUB_TOKEN } from './env.ts'
 
 const BASE = 'https://api.github.com'
 export const FOCUS_REPO = GITHUB_REPO
+export function isGithubLive() {
+  return Boolean(GITHUB_TOKEN)
+}
 const SKIP_TYPES = new Set(['chore', 'docs', 'test', 'ci', 'style', 'build', 'revert'])
 const SKIP_SCOPES = new Set(['tests', 'test', 'docs', 'ci', 'chore'])
 const GENERIC_SCOPES = new Set(['app', 'core', 'main', 'misc', 'src', 'repo', 'api', 'env', 'hooks', 'example', 'frontend', 'backend', 'demo'])
 
-export function isGithubLive(): boolean {
-  return Boolean(GITHUB_TOKEN)
+export const GITHUB_WRITE_HINT =
+  'Fine-grained PAT on this repo: Contents (read and write) + Pull requests (read and write). Classic PAT: repo (or public_repo if the repo is public).'
+
+function canPushFrom(json: any): boolean {
+  return Boolean(json?.permissions?.push || json?.permissions?.admin)
 }
 
 export interface GithubCommit {
@@ -61,6 +67,7 @@ export interface GithubScan {
   commitsPerDay: number[]
   openPRs: number
   repos: GithubRepoInfo[]
+  canPush: boolean
 }
 
 export function parsePrNumber(message: string): number | null {
@@ -281,6 +288,7 @@ function offScan(error: string, repos: GithubRepoInfo[] = [], login: string | nu
     commitsPerDay: Array.from({ length: 14 }, () => 0),
     openPRs: 0,
     repos,
+    canPush: false,
   }
 }
 
@@ -295,6 +303,34 @@ async function fetchPages<T>(path: string, maxPages: number, perPage: number): P
     if (batch.length < perPage) break
   }
   return { rows, error: null, status: 200 }
+}
+
+export async function githubStatus(): Promise<{
+  live: boolean
+  repo: string | null
+  login: string | null
+  canPush: boolean
+  hint: string
+  error: string | null
+}> {
+  if (!isGithubLive()) {
+    return { live: false, repo: FOCUS_REPO || null, login: null, canPush: false, hint: GITHUB_WRITE_HINT, error: 'Set GITHUB_TOKEN in .env, then restart the backend.' }
+  }
+  const user = await ghget('/user')
+  const login = user.ok ? String(user.json?.login ?? '') || null : null
+  if (!FOCUS_REPO) {
+    return { live: user.ok, repo: null, login, canPush: false, hint: GITHUB_WRITE_HINT, error: user.ok ? 'Set GITHUB_REPO=owner/name' : errMsg(user.json, `GitHub ${user.status}`) }
+  }
+  const repo = await ghget(`/repos/${FOCUS_REPO}`)
+  const canPush = canPushFrom(repo.json)
+  return {
+    live: user.ok && repo.ok,
+    repo: FOCUS_REPO,
+    login,
+    canPush,
+    hint: GITHUB_WRITE_HINT,
+    error: !user.ok ? errMsg(user.json, `GitHub ${user.status}`) : !repo.ok ? errMsg(repo.json, `GitHub ${repo.status}`) : canPush ? null : GITHUB_WRITE_HINT,
+  }
 }
 
 export async function listRepos(): Promise<{ login: string | null; repos: GithubRepoInfo[]; error: string | null }> {
@@ -364,7 +400,8 @@ export async function scanRepo(_requested?: string | null): Promise<GithubScan> 
   const login = user.ok ? String(user.json?.login ?? '') || null : null
   const pinned: GithubRepoInfo[] = [{ fullName: repo, pushedAt: Date.now(), private: false }]
 
-  const [commitPage, prPage] = await Promise.all([
+  const [meta, commitPage, prPage] = await Promise.all([
+    ghget(`/repos/${repo}`),
     fetchPages<any>(`/repos/${repo}/commits`, 2, 100),
     fetchPages<any>(`/repos/${repo}/pulls?state=all`, 2, 50),
   ])
@@ -373,6 +410,7 @@ export async function scanRepo(_requested?: string | null): Promise<GithubScan> 
     return {
       ...offScan(`${repo}: ${commitPage.error}`, pinned, login),
       repo,
+      canPush: canPushFrom(meta.json),
     }
   }
 
@@ -391,6 +429,7 @@ export async function scanRepo(_requested?: string | null): Promise<GithubScan> 
     commitsPerDay: commitsPerDay(commits),
     openPRs: prs.filter((p) => p.state === 'open').length,
     repos: pinned,
+    canPush: canPushFrom(meta.json),
   }
   cache = { key: repo, at: Date.now(), payload }
   return payload
@@ -548,7 +587,10 @@ export async function shipFeature(input: GithubShipInput): Promise<GithubShipRes
     put = await ghreq(`/repos/${repo}/contents/${tagged}`, { method: 'PUT', body: putBody, timeoutMs: 45000 })
     if (put.ok) file = tagged
   }
-  if (!put.ok) return emptyShip(file, errMsg(put.json, `GitHub ${put.status}`))
+  if (!put.ok) {
+    const msg = errMsg(put.json, `GitHub ${put.status}`)
+    return emptyShip(file, put.status === 403 ? `${msg} — ${GITHUB_WRITE_HINT}` : msg)
+  }
   const commitSha = String(put.json?.commit?.sha ?? put.json?.content?.sha ?? '')
 
   const pr = await ghreq(`/repos/${repo}/pulls`, {
@@ -563,7 +605,10 @@ export async function shipFeature(input: GithubShipInput): Promise<GithubShipRes
     },
     timeoutMs: 45000,
   })
-  if (!pr.ok) return emptyShip(file, errMsg(pr.json, `GitHub ${pr.status}`))
+  if (!pr.ok) {
+    const msg = errMsg(pr.json, `GitHub ${pr.status}`)
+    return emptyShip(file, pr.status === 403 ? `${msg} — ${GITHUB_WRITE_HINT}` : msg)
+  }
   const number = Number(pr.json?.number)
   const url = pr.json?.html_url != null ? String(pr.json.html_url) : null
   const title = String(pr.json?.title ?? `feat: ${input.name}`)
