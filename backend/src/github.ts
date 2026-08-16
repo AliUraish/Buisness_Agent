@@ -16,6 +16,7 @@ export const GITHUB_WRITE_HINT =
   'Fine-grained PAT on this repo: Contents (read and write) + Pull requests (read and write). Classic PAT: repo (or public_repo if the repo is public).'
 
 function canPushFrom(json: any): boolean {
+  if (GITHUB_READ_ONLY) return false // writes are refused in ghreq regardless of token scope
   return Boolean(json?.permissions?.push || json?.permissions?.admin)
 }
 
