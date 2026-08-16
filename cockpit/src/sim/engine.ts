@@ -1693,6 +1693,7 @@ class Engine {
     void this.loadRails(true)
     void this.pollPerflo(true)
     void this.runResearchLoop()
+    this.runAutoCampaignLoop()
     if (!LIVE_ONLY) this.runBankLoop() // (with brains online the LIVE_ONLY path starts it above)
 
     // prize metric: revenue earned today from the real Stripe account.
@@ -1700,6 +1701,39 @@ class Engine {
     void this.pollStripeToday()
     const todayPoll = setInterval(() => void this.pollStripeToday(), 60_000)
     this.timers.push(todayPoll as unknown as ReturnType<typeof setTimeout>)
+  }
+
+  // ── Local human review (the working forms at /review) ───────────
+  // Terac is down, so the human-in-the-loop runs on our own form: the
+  // engine files a review, logs the URL, and polls for the verdict.
+  private async localReview(
+    kind: 'ship' | 'trade' | 'claim' | 'allocation',
+    payload: Record<string, string>,
+    timeoutMs = 120_000,
+  ): Promise<{ verdict: string; notes: string; confidence: string } | null> {
+    try {
+      const created = await fetch('/api/reviews', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind, payload }),
+      }).then((r) => (r.ok ? r.json() : null))
+      if (!created?.id) return null
+      this.log('alerts', 'Review Desk', `Human review form ready — open /review and answer (${kind})`, ['localhost:5173/review', created.id])
+      this.emit()
+      const deadline = Date.now() + timeoutMs
+      while (Date.now() < deadline) {
+        await this.sleep(5000)
+        const rec = await fetch(`/api/reviews/${created.id}`).then((r) => (r.ok ? r.json() : null))
+        if (rec?.status === 'done') {
+          this.log('alerts', 'Review Desk', `Human verdict in: ${rec.verdict || rec.confidence}${rec.notes ? ` — ${String(rec.notes).slice(0, 80)}` : ''}`, ['form'])
+          return { verdict: String(rec.verdict ?? ''), notes: String(rec.notes ?? ''), confidence: String(rec.confidence ?? '') }
+        }
+      }
+      this.log('alerts', 'Review Desk', `No human answer in ${Math.round(timeoutMs / 60000)}m — proceeding without the gate (${kind})`, ['timeout'])
+      return null
+    } catch {
+      return null
+    }
   }
 
   // ── Real forecast ensemble: five persona seats on three real models ──
@@ -1715,7 +1749,7 @@ class Engine {
     const facts =
       `Company: Business_Agent, an autonomous AI company selling the AgentBasis python SDK (AI agent observability). ` +
       `Launched today. Real Stripe revenue today: $${((rev?.grossCents ?? 0) / 100).toFixed(2)} across ${rev?.count ?? 0} payments (${rev?.mode ?? 'off'} mode). ` +
-      `LLM operating cost today: $${this.state.spendToday.toFixed(2)}. Marketing posts + GitHub shipping are live.`
+      `LLM operating cost today: $${this.state.spendToday.toFixed(2)}. Investment desk (Alpaca paper): realized P&L $${this.state.tradingRevenue.toFixed(2)}, ${this.state.positions.length} open positions. Marketing posts + GitHub shipping are live.`
     const results: Forecaster[] = []
     for (const seat of seats) {
       const text = await this.agentBrain(
@@ -1987,55 +2021,27 @@ class Engine {
 
   private async reviewAllocation() {
     const bank = this.state.bank
-    if (this.teracHiresUsed >= this.TERAC_HIRE_BUDGET) {
-      bank.review = { status: 'skipped', jobId: null, expert: null, note: 'session hire budget already used' }
+    bank.review.status = 'waiting'
+    this.emit()
+    const rows = bank.alloc.map((a) => `${a.label}: ${a.pct}%`).join(' · ')
+    const r = await this.localReview('allocation', {
+      feature: `Treasury division — ${bank.name} ($${bank.balance.toLocaleString()})`,
+      brief: `${rows}\n\nCFO reasoning: ${bank.note ?? 'CFO division'}`,
+    })
+    if (!r) {
+      bank.review = { status: 'skipped', jobId: null, expert: null, note: 'no human answer — division stands unreviewed' }
       this.emit()
       return
     }
-    this.teracHiresUsed++
-    bank.review.status = 'waiting'
-    this.emit()
-    try {
-      const hired = await hireAllocationReview({
-        bankName: bank.name,
-        balance: bank.balance,
-        alloc: bank.alloc,
-        rationale: bank.note ?? 'CFO division',
-      })
-      if (hired.verdict === 'error' || !hired.jobId) {
-        // insufficient Terac balance costs nothing — refund the hire slot
-        if (/412|401|insufficient balance|invalid or expired/i.test(hired.reason)) this.teracHiresUsed--
-        bank.review = { status: 'skipped', jobId: null, expert: null, note: hired.reason.slice(0, 120) }
-        this.log('alerts', 'Terac Liaison', `Treasury review skipped — ${hired.reason.slice(0, 100)}`, ['no hire'])
-        this.emit()
-        return
-      }
-      bank.review = { status: 'waiting', jobId: hired.jobId, expert: null, note: 'human reviewing the division' }
-      this.log('alerts', 'Terac Liaison', `Treasury division sent for human review — $${bank.balance.toLocaleString()} across ${bank.alloc.length} categories`, [hired.jobId, 'live'])
-      this.emit()
-      // sparing background poll: every 30s, give up after 10 minutes
-      let polls = 0
-      const t = setInterval(() => {
-        polls++
-        if (polls > 20 || !bank.review.jobId || ['approved', 'adjust'].includes(bank.review.status)) {
-          clearInterval(t)
-          return
-        }
-        void pollAllocationReview(bank.review.jobId)
-          .then((v) => {
-            if (v.verdict === 'waiting') return
-            bank.review = { status: v.verdict === 'approved' ? 'approved' : 'adjust', jobId: bank.review.jobId, expert: v.expert, note: v.reason.slice(0, 140) }
-            this.log('alerts', 'Terac Liaison', `${v.expert ?? 'Human'} ${v.verdict === 'approved' ? 'approved' : 'flagged'} the treasury division — ${v.reason.slice(0, 90)}`, [v.verdict])
-            clearInterval(t)
-            this.emit()
-          })
-          .catch(() => undefined)
-      }, 30_000)
-      this.timers.push(t as unknown as ReturnType<typeof setTimeout>)
-    } catch (e) {
-      bank.review = { status: 'skipped', jobId: null, expert: null, note: (e instanceof Error ? e.message : 'hire failed').slice(0, 120) }
-      this.emit()
+    const approved = /approve/i.test(r.verdict)
+    bank.review = {
+      status: approved ? 'approved' : 'adjust',
+      jobId: null,
+      expert: 'human (form)',
+      note: r.notes || (approved ? 'approved via the review form' : 'flagged via the review form'),
     }
+    this.log('alerts', 'Review Desk', `Human ${approved ? 'approved' : 'flagged'} the treasury division${r.notes ? ` — ${r.notes.slice(0, 90)}` : ''}`, [approved ? 'approved' : 'adjust'])
+    this.emit()
   }
 
   private async pollPerflo(first: boolean) {
@@ -2460,6 +2466,26 @@ class Engine {
 
   // Audience: Start queues five writer agents. Uses the next committed
   // feature from the Product → marketing queue when GitHub has one.
+  private autoCampaigns = 0
+  private lastCampaignAt = 0
+
+  // posting is automated: when the real ship loop queues a feature for
+  // marketing, a campaign self-starts — spaced ≥8 min apart, max 4/session
+  // (each campaign is ~14 real LLM calls). The Start button still works.
+  private runAutoCampaignLoop() {
+    const t = setInterval(() => {
+      if (!this.llmAvailable()) return
+      if (this.state.campaignSim.busy) return
+      if (this.autoCampaigns >= 4) return
+      if (Date.now() - this.lastCampaignAt < 8 * 60_000) return
+      if (!this.state.marketingQueue.some((q) => q.status === 'queued')) return
+      this.autoCampaigns++
+      this.log('marketing', 'Writer Bench', `Auto-start — queued feature detected, campaign ${this.autoCampaigns}/4 this session`, ['auto'])
+      this.startCampaign()
+    }, 60_000)
+    this.timers.push(t as unknown as ReturnType<typeof setTimeout>)
+  }
+
   startCampaign = (): boolean => {
     const sim = this.state.campaignSim
     if (sim.busy) return false
@@ -2476,6 +2502,7 @@ class Engine {
       this.state.marketingPick = pick.id
     }
     this.state.campaigns++
+    this.lastCampaignAt = Date.now()
     const camp = this.state.campaigns
     this.state.sessionCampaigns.push({ label: `campaign #${camp} — ${feature}`, at: Date.now() })
     if (this.state.sessionCampaigns.length > 10) this.state.sessionCampaigns.shift()
@@ -3313,36 +3340,23 @@ class Engine {
   private async runTradeGate(round: MarketRound, winAsset: Asset) {
     const gate = round.terac
 
-    // real hires cost real money (~$12/study) — the desk makes exactly ONE
-    // Terac call per session. Every later round reuses that expert's stated
-    // confidence (labeled with its age) or desk consensus, no further calls.
-    if (this.teracHiresUsed >= this.TERAC_HIRE_BUDGET) {
-      const prior = this.lastExpertReading
-      if (prior) {
-        const mins = Math.max(1, Math.round((Date.now() - prior.at) / 60_000))
-        gate.status = 'expert'
-        gate.confidence = prior.confidence
-        gate.expert = prior.expert
-        gate.note = `${prior.note} · expert reading from ${mins}m ago — one hire per session`
-      } else {
-        gate.status = 'error'
-        gate.confidence = null
-        gate.note = 'No Terac form filled this session — holding fills'
-      }
+    // human confidence comes from the LOCAL review form now (Terac is down).
+    // One form ask per session; later rounds reuse the reading or fall back
+    // to desk consensus, labeled either way.
+    const prior = this.lastExpertReading
+    if (prior) {
+      const mins = Math.max(1, Math.round((Date.now() - prior.at) / 60_000))
+      gate.status = 'expert'
+      gate.confidence = prior.confidence
+      gate.expert = prior.expert
+      gate.note = `${prior.note} · human reading from ${mins}m ago`
       this.emit()
       return
     }
-    this.teracHiresUsed++ // attempts count too — never an accidental second paid call
 
     gate.status = 'hiring'
-    this.setNode('risk', 'acting', 'routing to Terac…')
+    this.setNode('risk', 'acting', 'routing to review form…')
     this.fire('ceo>risk', DEPT_COLOR.alerts)
-    this.log('alerts', 'Risk Sentinel', `Trade routed to Terac — confidence check on the $${round.amount} ${winAsset.symbol} deploy`, ['terac.com'])
-    this.emit()
-    await this.sleep(800)
-    this.setNode('risk', 'idle')
-    this.setNode('terac', 'acting', 'hiring crypto expert…')
-    this.fire('risk>terac', DEPT_COLOR.alerts)
     this.emit()
 
     const ranking = round
@@ -3352,59 +3366,33 @@ class Engine {
       })
       .join(' · ')
 
-    try {
-      const hired = await hireTradeReview({
-        symbol: winAsset.symbol,
-        name: winAsset.name,
-        amount: round.amount,
-        roi: round.consensus![0].roi,
-        ranking,
-      })
-      gate.live = hired.live
-      gate.jobId = hired.jobId || null
-      gate.quote = hired.quote
-      gate.dashboardUrl = hired.dashboardUrl
-
-      if (hired.status === 'error') {
-        gate.status = 'error'
-        gate.confidence = null
-        gate.note = hired.reason
-        this.log('alerts', 'Terac Liaison', `No Terac form — holding the ${winAsset.symbol} fill. ${hired.reason.slice(0, 90)}`, [
-          hired.live ? 'hire failed' : 'needs key',
-        ])
-        this.setNode('terac', 'idle')
-        this.emit()
-        return
-      }
-
-      gate.status = 'waiting'
-      this.log('alerts', 'Terac Liaison', `Opportunity live — waiting on the Terac form for ${winAsset.symbol}`, [hired.jobId, 'live'])
-      this.setNode('terac', 'acting', 'waiting on Terac form…')
+    gate.status = 'waiting'
+    this.emit()
+    const r = await this.localReview(
+      'trade',
+      {
+        feature: `Deploy $${round.amount} into ${winAsset.symbol}`,
+        brief: `Desk ranking: ${ranking}. Winner: ${winAsset.symbol} (${winAsset.name}) at $${winAsset.price.toPrecision(6)}.`,
+      },
+      90_000,
+    )
+    this.setNode('risk', 'idle')
+    if (r?.confidence) {
+      const conf = /high/i.test(r.confidence) && !/very/i.test(r.confidence) ? 88 : /medium/i.test(r.confidence) ? 62 : /very/i.test(r.confidence) ? 12 : 38
+      gate.status = 'expert'
+      gate.confidence = conf
+      gate.expert = 'human (form)'
+      gate.note = r.notes || `confidence ${r.confidence} via the review form`
+      this.lastExpertReading = { confidence: conf, expert: 'human (form)', note: gate.note, at: Date.now() }
       this.emit()
-
-      const v = await this.waitForTradeVerdict(hired.jobId)
-      if (v.status === 'done' && v.confidence != null) {
-        gate.status = 'expert'
-        gate.confidence = v.confidence
-        gate.expert = v.expert
-        gate.note = v.reason
-        this.lastExpertReading = { confidence: v.confidence, expert: v.expert, note: v.reason, at: Date.now() }
-        this.log('alerts', 'Terac Liaison', `${v.expert ?? 'Terac expert'} filled the form — ${v.confidence}%: ${v.reason.slice(0, 100)}`, ['form'])
-      } else {
-        gate.status = 'error'
-        gate.note = v.reason
-        this.log('alerts', 'Terac Liaison', `Terac form incomplete — holding the fill. ${v.reason.slice(0, 90)}`, ['error'])
-      }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      gate.status = 'error'
-      gate.note = msg.slice(0, 90)
-      this.log('alerts', 'Terac Liaison', `Hire failed — holding the fill. ${msg.slice(0, 90)}`, ['error'])
+      return
     }
-    this.setNode('terac', 'idle')
+    const desk = this.deskConfidence(round)
+    gate.status = 'desk'
+    gate.confidence = desk.confidence
+    gate.note = `${desk.note} · no human answer on the form`
     this.emit()
   }
-
   private async waitForTradeVerdict(jobId: string): Promise<{
     status: 'done' | 'waiting' | 'error'
     confidence: number | null
