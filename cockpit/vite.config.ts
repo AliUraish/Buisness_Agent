@@ -42,12 +42,18 @@ export default defineConfig(({ mode }) => {
       __ALPACA_ORDERS__: JSON.stringify(Boolean(key && secret)),
     },
     server: {
+      // the reviewer pages on the site (port 5200) read the Alpaca proxy cross-origin
+      cors: true,
       proxy: {
         '/api': {
           target: 'http://127.0.0.1:8787',
           changeOrigin: true,
         },
         '/review': {
+          target: 'http://127.0.0.1:8787',
+          changeOrigin: true,
+        },
+        '/legal': {
           target: 'http://127.0.0.1:8787',
           changeOrigin: true,
         },
