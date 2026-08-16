@@ -17,3 +17,7 @@ cd cockpit && npm install && npm run dev
 
 Workspace env lives in `.env` (never commit it). `TERAC_API_KEY` is read only
 by the backend. Cockpit proxies `/api` to `http://127.0.0.1:8787` in dev.
+
+`GITHUB_TOKEN` must be able to open PRs on `AliUraish/Buisness_Agent`.
+Fine-grained PAT: **Contents** (read and write) + **Pull requests** (read
+and write). Classic PAT: `repo`.
