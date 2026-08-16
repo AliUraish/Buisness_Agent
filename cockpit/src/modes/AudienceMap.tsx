@@ -21,7 +21,7 @@ const COLOR_OF: Record<string, string> = Object.fromEntries(CLUSTERS.map((c) => 
 const CLUSTER_NAME: Record<string, string> = Object.fromEntries(CLUSTERS.map((c) => [c.id, c.name]))
 
 const STAGE_LABEL: Record<CampaignSim['stage'], string> = {
-  idle: 'press Start to queue 5 posts',
+  idle: 'auto-posts on new ships · Start forces one now',
   queuing: 'queuing 5 posts',
   writing: '5 agents drafting',
   voting: '9 agents voting',
@@ -116,7 +116,13 @@ function SimPanel({ sim }: { sim: CampaignSim }) {
       <ProductQueue />
       <div className="aud-sim-head">
         <div>
-          <span className="testmode">MOCK DATA</span>
+          {s.llm && (s.llm.anthropic || s.llm.openai || s.llm.gemini) ? (
+            <>
+              <span className="testmode live">REAL LLM</span> <span className="testmode">MOCK X POST</span>
+            </>
+          ) : (
+            <span className="testmode">MOCK DATA</span>
+          )}
           <span className="aud-sim-kicker">Writer Bench</span>
           <span className="aud-sim-title">
             {sim.stage === 'idle'
