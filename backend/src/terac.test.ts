@@ -7,6 +7,8 @@ import {
   formatTeracError,
   tradeOpportunityBody,
   shipOpportunityBody,
+  legalOpportunityBody,
+  parseLegalVerdict,
 } from './terac.ts'
 
 describe('parseVerdict', () => {
@@ -62,8 +64,10 @@ describe('opportunityBody', () => {
       clusterTitle: 'infra reviewer',
     })
     for (const q of body.screening_questions) {
+      if (q.pick === 'text') continue
       expect(q.answers.length).toBeGreaterThanOrEqual(2)
     }
+    expect(body.screening_questions.some((q: any) => q.key === 'notes' && q.pick === 'text')).toBe(true)
   })
 
   it('is a cheap 1-person activity (no AI interview)', () => {
@@ -181,6 +185,32 @@ describe('shipOpportunityBody', () => {
     expect(body.tasks[0].duration_minutes).toBe(5)
     expect(body.tasks[0].task_type).toBe('activity')
     expect(body.business_type).toBe('b2c')
+    expect(ship.question_rich_text).toContain('Open the PR')
+    expect(body.screening_questions.find((q: any) => q.key === 'notes')?.pick).toBe('text')
+  })
+})
+
+describe('legalOpportunityBody', () => {
+  it('hires a human for legal finances, not posts', () => {
+    const body = legalOpportunityBody('p1', {
+      bankName: 'Perflo',
+      balance: 12000,
+      alloc: [
+        { label: 'Taxes reserve', pct: 21 },
+        { label: 'Cash buffer', pct: 79 },
+      ],
+      rationale: 'Keep a tax line.',
+      revenueToday: '$0.00 Stripe test',
+    })
+    expect(body.title).toMatch(/Legal finances/)
+    expect(body.tasks[0].task_url).toContain('/legal')
+    expect(body.screening_questions.find((q: any) => q.key === 'verdict').answers[0].text).toMatch(/Approve/)
+    expect(parseLegalVerdict([{ key: 'verdict', answer: 'Flag — legal or finance issue (say what)' }]).verdict).toBe(
+      'revised',
+    )
+    expect(parseLegalVerdict([{ key: 'verdict', answer: 'Approve — legal finances look in order' }]).verdict).toBe(
+      'approved',
+    )
   })
 })
 
