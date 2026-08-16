@@ -16,13 +16,13 @@ import {
 } from './terac.ts'
 import { isLinqLive, paymentLink, sendOnboard, sendSupportMessage } from './linq.ts'
 import { isStripeLive, isWhopLive, stripeSummary, stripeToday, whopSummary } from './payments.ts'
-import { complete, llmStatus, type Provider, type Tier } from './llm.ts'
+import { complete, llmStatus, rechargeCredits, type Provider, type Tier } from './llm.ts'
 import { dbStatus, getStateAll, listEvents, putState, saveEvent } from './db.ts'
 import { perfloSummary } from './perflo.ts'
 import { research, researchStatus } from './research.ts'
-import { hireAllocationReview, pollAllocationReview, type AllocationInput } from './terac.ts'
+import { hireAllocationReview, hireLegalReview, pollAllocationReview, pollLegalReview, type AllocationInput, type LegalInput } from './terac.ts'
 import { isXLive, loadTryteracAudience, snapshotStatus } from './x.ts'
-import { FOCUS_REPO, isGithubLive, listRepos, mergePullRequest, scanRepo, shipFeature } from './github.ts'
+import { FOCUS_REPO, githubStatus, isGithubLive, listRepos, mergePullRequest, scanRepo, shipFeature } from './github.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -87,6 +87,7 @@ async function sendReview(res: http.ServerResponse, url: URL) {
     .replaceAll('__PR_URL__', prUrl)
     .replaceAll('__REPO_URL__', repoUrl)
     .replaceAll('__FILES__', esc(files || '(listed in the PR)'))
+    .replaceAll('__MODE__', esc(q.get('mode') || 'ship'))
 
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Access-Control-Allow-Origin': '*' })
   res.end(html)
@@ -135,7 +136,7 @@ const server = http.createServer(async (req, res) => {
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/github/status') {
-      send(res, 200, { live: isGithubLive() })
+      send(res, 200, await githubStatus())
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/github/repos') {
@@ -194,6 +195,23 @@ const server = http.createServer(async (req, res) => {
       send(res, 200, await pollAllocationReview(decodeURIComponent(alloc[1])))
       return
     }
+    if (req.method === 'POST' && url.pathname === '/api/terac/legal') {
+      const b = await readJson(req)
+      const input: LegalInput = {
+        bankName: String(b?.bankName ?? 'the operating account'),
+        balance: Number(b?.balance ?? 0),
+        alloc: Array.isArray(b?.alloc) ? b.alloc.map((a: any) => ({ label: String(a?.label ?? ''), pct: Number(a?.pct ?? 0) })) : [],
+        rationale: String(b?.rationale ?? '').slice(0, 1500),
+        revenueToday: String(b?.revenueToday ?? 'unknown'),
+      }
+      send(res, 200, await hireLegalReview(input))
+      return
+    }
+    const legalJob = url.pathname.match(/^\/api\/terac\/legal\/([^/]+)$/)
+    if (req.method === 'GET' && legalJob) {
+      send(res, 200, await pollLegalReview(decodeURIComponent(legalJob[1])))
+      return
+    }
     if (req.method === 'GET' && url.pathname === '/api/research/status') {
       send(res, 200, researchStatus())
       return
@@ -239,6 +257,11 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && url.pathname === '/api/llm/status') {
       send(res, 200, llmStatus())
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/api/llm/recharge') {
+      const b = await readJson(req)
+      send(res, 200, rechargeCredits(Number(b?.pack ?? 40)))
       return
     }
     if (req.method === 'POST' && url.pathname === '/api/llm/complete') {
@@ -320,6 +343,12 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && (url.pathname === '/review' || url.pathname === '/review.html')) {
       await sendReview(res, url)
+      return
+    }
+    if (req.method === 'GET' && (url.pathname === '/legal' || url.pathname === '/legal.html')) {
+      const html = readFileSync(fileURLToPath(new URL('./legal.html', import.meta.url)), 'utf8')
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Access-Control-Allow-Origin': '*' })
+      res.end(html)
       return
     }
     send(res, 404, { error: 'not found' })
