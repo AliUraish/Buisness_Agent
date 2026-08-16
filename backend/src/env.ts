@@ -31,6 +31,14 @@ loadDotenv(resolve(root, 'backend/.env'), true)
 
 export const TERAC_API_KEY = (process.env.TERAC_API_KEY ?? '').trim()
 export const PORT = Number(process.env.PORT ?? 8787)
+
+function publicOrigin(): string {
+  const raw = (process.env.PUBLIC_URL ?? process.env.RENDER_EXTERNAL_URL ?? '').trim().replace(/\/$/, '')
+  if (!raw) return `http://127.0.0.1:${PORT}`
+  return raw.startsWith('http://') || raw.startsWith('https://') ? raw : `https://${raw}`
+}
+
+export const PUBLIC_ORIGIN = publicOrigin()
 export const X_BEARER_TOKEN = (process.env.X_BEARER_TOKEN ?? process.env.TWITTER_BEARER_TOKEN ?? '').trim()
 export const GITHUB_TOKEN = (process.env.GITHUB_TOKEN ?? '').trim()
 export const COMPANY_NAME = 'Bob the Busines'
@@ -54,7 +62,7 @@ export const WHOP_API_KEY = (process.env.WHOP_API_KEY ?? '').trim()
 export const STRIPE_PAYMENT_LINK = (process.env.STRIPE_PAYMENT_LINK ?? '').trim()
 // Public URL Terac participants open for the review UI. Local default is
 // the backend's GET /review (only works if that host is reachable).
-export const REVIEW_URL = (process.env.REVIEW_URL ?? '').trim()
+export const REVIEW_URL = (process.env.REVIEW_URL ?? '').trim() || `${PUBLIC_ORIGIN}/review`
 
 // LLM providers — the agents' actual brains. Keys never leave the backend.
 export const ANTHROPIC_API_KEY = (process.env.ANTHROPIC_API_KEY ?? '').trim()
