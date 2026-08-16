@@ -4,126 +4,20 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Terac — should we ship this?</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <!-- This snapshot is superseded by the live, backend-rendered form.
+       The backend fills in the current feature / PR / files and records
+       the verdict against the reviews API. -->
+  <script>
+    var target = 'http://127.0.0.1:8787/review' + (location.search || '')
+    location.replace(target)
+  </script>
+  <meta http-equiv="refresh" content="0; url=http://127.0.0.1:8787/review" />
   <style>
-    :root {
-      --bg: #0b0c0e;
-      --panel: #14161a;
-      --ink: #f2f1ec;
-      --muted: #9a9a92;
-      --line: rgba(242,241,236,.12);
-      --accent: #c8f542;
-      --warn: #e8a33d;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      background: var(--bg); color: var(--ink);
-      font-family: "IBM Plex Sans", system-ui, sans-serif;
-      font-size: 15px; line-height: 1.5; padding: 28px 16px 80px;
-    }
-    .wrap { max-width: 640px; margin: 0 auto; }
-    .brand {
-      font-family: "IBM Plex Mono", monospace; font-size: 11px; letter-spacing: .14em;
-      text-transform: uppercase; color: var(--muted); margin-bottom: 10px;
-    }
-    h1 { font-size: 24px; font-weight: 600; letter-spacing: -.03em; margin-bottom: 8px; }
-    .meta { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
-    .card {
-      background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
-      padding: 20px; margin-bottom: 14px;
-    }
-    .k {
-      font-family: "IBM Plex Mono", monospace; font-size: 11px; letter-spacing: .1em;
-      text-transform: uppercase; color: var(--muted); margin-bottom: 10px;
-    }
-    .feat { font-size: 18px; font-weight: 600; margin-bottom: 6px; }
-    .brief { color: var(--muted); white-space: pre-wrap; font-size: 14px; }
-    .links { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
-    .go, .ghost {
-      display: inline-flex; align-items: center; justify-content: center;
-      height: 42px; padding: 0 16px; border-radius: 8px; font-weight: 600;
-      text-decoration: none; font-size: 14px;
-    }
-    .go { background: var(--accent); color: #111; }
-    .ghost { border: 1px solid var(--line); color: var(--ink); }
-    .mono { font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--muted); }
-    .q { font-weight: 500; margin: 4px 0 10px; }
-    label.opt {
-      display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; margin: 8px 0;
-      border: 1px solid var(--line); border-radius: 10px; cursor: pointer;
-    }
-    label.opt:has(input:checked) { border-color: var(--accent); }
-    textarea {
-      width: 100%; min-height: 84px; padding: 12px; border: 1px solid var(--line);
-      border-radius: 10px; background: transparent; color: var(--ink); font: inherit; resize: vertical;
-    }
-    #code-block { display: none; margin-top: 18px; }
-    .foot { color: var(--muted); font-size: 12px; margin-top: 16px; }
+    body { background: #0b0c0e; color: #f2f1ec; font: 15px/1.5 system-ui, sans-serif; display: grid; place-items: center; min-height: 100vh; margin: 0; }
+    a { color: #8ab4f8; }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="brand">Terac · ship review · human in the loop</div>
-    <h1>Should we ship this?</h1>
-    <p class="meta">Agents at Bob the Busines opened this change on AliUraish/Buisness_Agent. Open the PR, read the diff, then answer. Same answers go into Terac.</p>
-
-    <div class="card">
-      <div class="k">Feature / commit</div>
-      <div class="feat" id="feature">__FEATURE__</div>
-      <p class="mono" id="pr-line">__PR_LINE__</p>
-      <p class="brief" id="brief">__BRIEF__</p>
-      <div class="links">
-        <a class="go" id="pr-link" href="__PR_URL__" target="_blank" rel="noopener">Open the PR</a>
-        <a class="ghost" id="repo-link" href="__REPO_URL__" target="_blank" rel="noopener">Open the repo</a>
-      </div>
-      <p class="mono" style="margin-top:10px" id="files">Files: __FILES__</p>
-    </div>
-
-    <form class="card" id="form">
-      <div class="k">Your verdict</div>
-      <p class="q">1. Should we ship this feature / PR?</p>
-      <label class="opt"><input type="radio" name="ship" value="yes" /> Yes — ship it</label>
-      <label class="opt"><input type="radio" name="ship" value="no" /> No — do not ship</label>
-
-      <div id="code-block">
-        <p class="q">2. You said ship. Open the repo / PR. Is the code ready?</p>
-        <label class="opt"><input type="radio" name="code" value="perfect" /> Yes — code is ready to merge</label>
-        <label class="opt"><input type="radio" name="code" value="not" /> No — not perfect, needs work</label>
-      </div>
-
-      <p class="q" style="margin-top:16px">3. One sentence: why.</p>
-      <textarea name="notes" placeholder="e.g. PR matches the feature; tests missing on the new module."></textarea>
-    </form>
-    <p class="foot">Submit these same answers in Terac. This page is the briefing + form the human sees.</p>
-  </div>
-  <script>
-    const q = new URLSearchParams(location.search)
-    const set = (id, v) => { const el = document.getElementById(id); if (el && v) el.textContent = v }
-    const href = (id, v) => { const el = document.getElementById(id); if (el && v && v !== '#') el.href = v }
-    const feature = q.get('feature')
-    const pr = q.get('pr')
-    const prTitle = q.get('prTitle')
-    const repo = q.get('repo') || 'AliUraish/Buisness_Agent'
-    const files = q.get('files')
-    const brief = q.get('brief') || q.get('post')
-    const prUrl = q.get('prUrl') || (repo && pr ? `https://github.com/${repo}/pull/${pr}` : repo ? `https://github.com/${repo}` : '#')
-    const repoUrl = repo ? `https://github.com/${repo}` : '#'
-    if (feature) set('feature', feature)
-    if (pr || prTitle) set('pr-line', [pr ? `PR #${pr}` : '', prTitle].filter(Boolean).join(' · '))
-    if (brief) set('brief', brief)
-    if (files) set('files', 'Files: ' + files)
-    href('pr-link', prUrl)
-    href('repo-link', repoUrl)
-
-    const codeBlock = document.getElementById('code-block')
-    document.querySelectorAll('input[name="ship"]').forEach((el) => {
-      el.addEventListener('change', () => {
-        const yes = document.querySelector('input[name="ship"][value="yes"]')?.checked
-        codeBlock.style.display = yes ? 'block' : 'none'
-      })
-    })
-  </script>
+  <p>Redirecting to the live review form… <a href="http://127.0.0.1:8787/review">Open it directly</a> (backend must be running on port 8787).</p>
 </body>
 </html>
