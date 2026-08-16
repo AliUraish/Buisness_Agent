@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ship Review</title>
+<style>
+  @font-face { font-family: 'Inter'; font-style: normal; font-weight: 400; font-display: swap; src: url(../assets/inter-400.woff2) format('woff2'); }
+  @font-face { font-family: 'Inter'; font-style: normal; font-weight: 500; font-display: swap; src: url(../assets/inter-500.woff2) format('woff2'); }
+  :root {
+    --bg: #fafaf8; --panel: #ffffff; --border: rgba(0,0,0,0.07); --edge: rgba(0,0,0,0.12);
+    --ink: #111111; --ink-2: #6b6b6b; --ink-3: #9b9b9b;
+    --violet: #7c6ff0; --teal: #2ab3a6; --amber: #e8a33d; --rose: #e05c8a; --green: #3fa55c; --red: #d64545;
+    --shadow: 0 2px 8px rgba(0,0,0,0.08);
+    color-scheme: light only;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--ink); font-family: 'Inter', -apple-system, 'Helvetica Neue', Arial, sans-serif; font-size: 15px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+  .mono { font-family: 'SF Mono', 'Menlo', 'Consolas', monospace; font-variant-numeric: tabular-nums; }
+  .num { font-variant-numeric: tabular-nums; }
+  a { color: inherit; }
+  a:focus-visible, button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; border-radius: 4px; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 0 24px; }
+  .topbar { background: var(--panel); border-bottom: 1px solid var(--border); }
+  .topbar .wrap { height: 52px; display: flex; align-items: center; justify-content: space-between; max-width: 1060px; }
+  .wordmark { font-size: 14px; font-weight: 500; letter-spacing: 0.02em; text-decoration: none; }
+  .wordmark span { color: var(--ink-3); font-weight: 400; }
+  .topbar .back { font-size: 13px; color: var(--ink-3); text-decoration: none; }
+  .topbar .back:hover { color: var(--ink); }
+  main { padding: 56px 0 80px; }
+  .eyebrow { font-size: 11px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--ink-3); font-weight: 500; margin-bottom: 14px; }
+  h1 { font-size: clamp(28px, 5vw, 40px); font-weight: 500; letter-spacing: -0.035em; line-height: 1.08; text-wrap: balance; margin-bottom: 12px; }
+  .lede { font-size: 16px; color: var(--ink-2); text-wrap: pretty; margin-bottom: 20px; }
+  .lede strong { color: var(--ink); font-weight: 500; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 36px; }
+  .chip { font-family: 'SF Mono', 'Menlo', monospace; font-size: 11px; color: var(--ink-2); border: 1px solid var(--border); background: var(--panel); border-radius: 999px; padding: 3px 11px; }
+  .chip i { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 6px; position: relative; top: -1px; }
+  section { margin-bottom: 36px; }
+  h2 { font-size: 13px; font-weight: 500; letter-spacing: 0.07em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 12px; }
+  p { color: var(--ink-2); text-wrap: pretty; }
+  p strong { color: var(--ink); font-weight: 500; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); padding: 20px 22px; }
+  .btns { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
+  .btn { display: inline-block; font: inherit; font-size: 14px; font-weight: 500; padding: 10px 20px; border-radius: 8px; text-decoration: none; border: 1px solid transparent; cursor: pointer; background: none; }
+  .btn.primary { background: var(--ink); color: var(--bg); }
+  .btn.primary:hover { opacity: 0.85; }
+  .btn.primary:disabled { opacity: 0.4; cursor: default; }
+  .btn.ghost { border-color: var(--edge); color: var(--ink-2); }
+  .btn.ghost:hover { color: var(--ink); border-color: var(--ink-3); }
+  label.field { display: block; margin-bottom: 16px; }
+  label.field .fname { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; }
+  label.field .fhint { color: var(--ink-3); font-weight: 400; }
+  textarea, input[type="text"] {
+    width: 100%; font: inherit; font-size: 14px; color: var(--ink);
+    background: var(--panel); border: 1px solid var(--edge); border-radius: 8px;
+    padding: 10px 12px; resize: vertical;
+  }
+  textarea { min-height: 74px; }
+  .sendnote { font-size: 12.5px; color: var(--ink-3); margin-top: 10px; }
+  .sendnote.ok { color: var(--green); }
+  .sendnote.err { color: var(--red); }
+  footer { border-top: 1px solid var(--border); padding: 26px 0 40px; }
+  footer .wrap { max-width: 1060px; display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-3); }
+  footer a { color: var(--ink-3); }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+  .feature .fkicker { font-size: 11px; color: var(--rose); letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 8px; }
+  .feature .fname-lg { font-size: 22px; font-weight: 500; letter-spacing: -0.02em; margin-bottom: 8px; }
+  .feature .fbrief { margin-bottom: 12px; }
+  .feature .fmeta { font-size: 11.5px; color: var(--ink-3); }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap">
+    <a class="wordmark" href="../index.html">Bob the Busines <span>/ human loop</span></a>
+    <a class="back" href="../dashboard/">open the dashboard</a>
+  </div>
+</header>
+<main>
+  <div class="wrap">
+
+    <div class="eyebrow">Terac briefing · product desk</div>
+    <h1>You are the human in the ship loop.</h1>
+    <p class="lede">Agents found a gap a rival already covers, wrote the code, and opened a pull request. <strong>First look at the feature. Then tell us what's good, what's bad, and anything else.</strong> Your words go straight back into the pipeline.</p>
+    <div class="chips">
+      <span class="chip"><i style="background: var(--violet)"></i>product</span>
+      <span class="chip">ONE human</span>
+      <span class="chip">~5 minutes</span>
+      <span class="chip">GitHub required</span>
+    </div>
+
+    <section>
+      <h2>1 · The feature</h2>
+      <div class="card feature">
+        <div class="fkicker mono" id="f-rival">rival gap</div>
+        <div class="fname-lg" id="f-name">…</div>
+        <p class="fbrief" id="f-brief"></p>
+        <div class="fmeta mono" id="f-meta"></div>
+        <div class="btns">
+          <a class="btn primary" id="f-pr" href="https://github.com/AliUraish/Buisness_Agent/pulls">Open the pull request</a>
+          <a class="btn ghost" href="https://github.com/AliUraish/Buisness_Agent">Browse the repo — AliUraish/Buisness_Agent</a>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>2 · Your review</h2>
+      <form id="shipform" class="card">
+        <label class="field">
+          <span class="fname">What is good <span class="fhint">— what should the agents keep doing?</span></span>
+          <textarea name="good" required placeholder="e.g. The span attributes match OpenLLMetry's naming, so dashboards work unchanged."></textarea>
+        </label>
+        <label class="field">
+          <span class="fname">What is bad <span class="fhint">— what would you fix before merging?</span></span>
+          <textarea name="bad" required placeholder="e.g. No test for streamed tool calls; the counter resets on retry."></textarea>
+        </label>
+        <label class="field">
+          <span class="fname">Additional thoughts <span class="fhint">— optional</span></span>
+          <textarea name="extra" placeholder="Anything the agents wouldn't think of."></textarea>
+        </label>
+        <button class="btn primary" type="submit">3 · Forward to the pipeline</button>
+        <p class="sendnote" id="shipnote">Your review posts to the company's event feed and shows up in the cockpit.</p>
+      </form>
+    </section>
+
+  </div>
+</main>
+<footer>
+  <div class="wrap">
+    <span>Bob the Busines — a zero-human company experiment (except you)</span>
+    <span class="mono">one human &middot; ~5 minutes &middot; paid via Terac</span>
+  </div>
+</footer>
+<script>
+const PIPELINE = 'http://127.0.0.1:8787/api/db/events';
+async function sendToPipeline(payload, noteEl, btnEl) {
+  noteEl.className = 'sendnote'; noteEl.textContent = 'Sending to the pipeline…';
+  btnEl.disabled = true;
+  try {
+    const r = await fetch(PIPELINE, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const j = await r.json();
+    if (!j.ok) throw new Error('backend declined the event');
+    noteEl.className = 'sendnote ok';
+    noteEl.textContent = 'Sent. Your review is in the activity feed — the agents pick it up next cycle.';
+  } catch (e) {
+    const q = JSON.parse(localStorage.getItem('terac-feedback-queue') || '[]');
+    q.push({ ...payload, queuedAt: new Date().toISOString() });
+    localStorage.setItem('terac-feedback-queue', JSON.stringify(q));
+    noteEl.className = 'sendnote err';
+    noteEl.textContent = 'Pipeline offline — saved locally (' + q.length + ' queued). Start the backend and resubmit.';
+    btnEl.disabled = false;
+  }
+}
+
+// The live pipeline opens this page with the same params reviewPageUrl() builds
+// (mode=ship). With no params we show the current demo feature from the sim.
+const q = new URLSearchParams(location.search);
+const F = {
+  feature: q.get('feature') || 'OpenAI tool_use spans',
+  prTitle: q.get('prTitle') || 'Copy tool_use names and counts onto the OpenAI request span',
+  brief:   q.get('brief')   || 'OpenLLMetry records OpenAI tool_use names. agentbasis-python-sdk did not — Gap Analyst flagged it.',
+  rival:   q.get('rival')   || 'OpenLLMetry',
+  files:   q.get('files')   || 'agentbasis/llms/openai/tool_spans.py',
+  pr:      q.get('pr')      || '',
+  prUrl:   q.get('prUrl')   || 'https://github.com/AliUraish/Buisness_Agent/pulls',
+};
+document.getElementById('f-rival').textContent = 'closes a gap vs ' + F.rival;
+document.getElementById('f-name').textContent = F.feature;
+document.getElementById('f-brief').textContent = F.brief + (F.prTitle ? ' PR: ' + F.prTitle + '.' : '');
+document.getElementById('f-meta').textContent = 'files: ' + F.files + (F.pr ? ' · PR #' + F.pr : '');
+document.getElementById('f-pr').href = F.prUrl;
+document.getElementById('f-pr').textContent = F.pr ? 'Open PR #' + F.pr : 'Open the pull request';
+
+document.getElementById('shipform').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const d = new FormData(e.target);
+  const msg = 'Human ship review — ' + F.feature +
+    ' · GOOD: ' + d.get('good') +
+    ' · BAD: ' + d.get('bad') +
+    (d.get('extra') ? ' · THOUGHTS: ' + d.get('extra') : '');
+  sendToPipeline(
+    { dept: 'product', agent: 'Ship Reviewer (human)', message: msg, chips: [F.feature, F.pr ? 'PR #' + F.pr : 'no PR ref'] },
+    document.getElementById('shipnote'),
+    e.target.querySelector('button[type=submit]')
+  );
+});
+
+</script>
+</body>
+</html>

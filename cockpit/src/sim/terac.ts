@@ -41,12 +41,30 @@ async function api<T>(path: string, init?: RequestInit, timeoutMs = 90000): Prom
   }
 }
 
-export async function refreshTeracStatus(): Promise<boolean> {
+export interface TeracMcpStatus {
+  live: boolean
+  url: string
+  org: string | null
+  credits: number | null
+  tools: string[]
+  error: string | null
+}
+
+export interface TeracLinkStatus {
+  live: boolean
+  mcp: TeracMcpStatus | null
+}
+
+export function blankTeracMcp(): TeracMcpStatus {
+  return { live: false, url: 'https://terac.com/api/mcp', org: null, credits: null, tools: [], error: null }
+}
+
+export async function refreshTeracStatus(): Promise<TeracLinkStatus> {
   try {
-    const s = await api<{ live: boolean }>('/status', undefined, 4000)
-    return Boolean(s.live)
+    const s = await api<{ live: boolean; mcp?: TeracMcpStatus }>('/status', undefined, 8000)
+    return { live: Boolean(s.live), mcp: s.mcp ?? null }
   } catch {
-    return false
+    return { live: false, mcp: null }
   }
 }
 
@@ -218,4 +236,32 @@ export async function hireAllocationReview(input: {
 
 export async function pollAllocationReview(jobId: string): Promise<Pick<TeracAllocationReview, 'verdict' | 'reason' | 'expert'>> {
   return api(`/allocations/${encodeURIComponent(jobId)}`)
+}
+
+export async function hireLegalReview(input: {
+  bankName: string
+  balance: number
+  alloc: { label: string; pct: number }[]
+  rationale: string
+  revenueToday: string
+}): Promise<TeracReview> {
+  try {
+    return await api<TeracReview>('/legal', { method: 'POST', body: JSON.stringify(input) }, 40000)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    return {
+      live: false,
+      jobId: '',
+      dashboardUrl: null,
+      quote: null,
+      expert: null,
+      title: 'Legal finances',
+      verdict: 'error',
+      reason: msg.slice(0, 180),
+    }
+  }
+}
+
+export async function pollLegalReview(jobId: string): Promise<Pick<TeracReview, 'verdict' | 'reason' | 'expert'>> {
+  return api(`/legal/${encodeURIComponent(jobId)}`)
 }

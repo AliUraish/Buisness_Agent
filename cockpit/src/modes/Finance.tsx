@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { engine, BOOT_MRR, LIVE_ONLY } from '../sim/engine'
+import { engine, BOOT_MRR, LIVE_ONLY, deskPnl } from '../sim/engine'
 import { useEngineTick } from '../App'
 import { buildHistory, PAST_CAMPAIGNS } from '../data/finance'
 
@@ -184,6 +184,109 @@ function ForecastChart() {
   )
 }
 
+// LIVE mode chart: today's REAL cumulative Stripe revenue (each point a
+// real charge), then the fan from the real model ensemble. No fabricated
+// history, no fake campaign markers.
+function RealRevenueChart() {
+  const s = useEngineTick()
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const [size, setSize] = useState({ w: 0, h: 0 })
+
+  useEffect(() => {
+    const el = wrapRef.current
+    if (!el) return
+    const ro = new ResizeObserver(() => setSize({ w: el.clientWidth, h: el.clientHeight }))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  const { w, h } = size
+  if (w === 0) return <div className="fin-chart-canvas" ref={wrapRef} />
+
+  const padL = 52
+  const padR = 16
+  const padT = 18
+  const padB = 30
+  const axisY = h - padB
+
+  const midnight = new Date()
+  midnight.setHours(0, 0, 0, 0)
+  const t0 = midnight.getTime()
+  const now = Date.now()
+  const horizon = now + 30 * 24 * 3600_000
+
+  // real charges today, cumulative
+  const charges = [...s.railsLive.stripe.recent].filter((r) => r.created >= t0).sort((a, b) => a.created - b.created)
+  let run = 0
+  const pts: { t: number; v: number }[] = [{ t: t0, v: 0 }]
+  for (const c of charges) {
+    pts.push({ t: c.created, v: run }) // step up at each real payment
+    run += c.amount
+    pts.push({ t: c.created, v: run })
+  }
+  const desk = Math.max(0, deskPnl(s.positions, s.assets, s.tradingRevenue))
+  pts.push({ t: now, v: run + desk })
+
+  // fan from the real ensemble (may be mid-arrival)
+  const fs = s.forecasters
+  const p50End = fs.length ? engine.forecastP50() : null
+  const lo = fs.length ? Math.min(...fs.map((f) => f.p50)) : null
+  const hi = fs.length ? Math.max(...fs.map((f) => f.p50)) : null
+
+  const yMax = Math.max(hi ?? 0, run + desk, 10) * 1.1
+  const X = (t: number) => padL + ((t - t0) / (horizon - t0)) * (w - padL - padR)
+  const Y = (v: number) => padT + (1 - v / yMax) * (h - padT - padB)
+
+  const actual = pts.map((p) => `${X(p.t)},${Y(p.v)}`).join(' ')
+  const STEPS = 30
+  const fanTop: string[] = []
+  const fanBot: string[] = []
+  const median: string[] = []
+  if (p50End != null && lo != null && hi != null) {
+    for (let i = 0; i <= STEPS; i++) {
+      const t = now + ((horizon - now) * i) / STEPS
+      const g = Math.pow(i / STEPS, 0.9)
+      const nowV = run + desk
+      fanTop.push(`${X(t)},${Y(nowV + (hi - nowV) * g)}`)
+      fanBot.push(`${X(t)},${Y(nowV + (Math.min(lo, nowV) - nowV) * g)}`)
+      median.push(`${X(t)},${Y(nowV + (p50End - nowV) * g)}`)
+    }
+  }
+
+  const gridLines = [0.25, 0.5, 0.75, 1].map((f) => yMax * f)
+
+  return (
+    <div className="fin-chart-canvas" ref={wrapRef}>
+      <svg width={w} height={h}>
+        {gridLines.map((v) => (
+          <g key={v}>
+            <line x1={padL} x2={w - padR} y1={Y(v)} y2={Y(v)} stroke="rgba(0,0,0,0.05)" strokeWidth={1} strokeDasharray="2 4" />
+            <text x={padL - 8} y={Y(v) + 3} textAnchor="end" fontSize={10} fill="var(--ink-3)" className="mono">
+              {fmtK(v)}
+            </text>
+          </g>
+        ))}
+        <line x1={padL} x2={w - padR} y1={axisY} y2={axisY} stroke="rgba(0,0,0,0.10)" strokeWidth={1} />
+        <text x={X(t0)} y={axisY + 16} textAnchor="start" fontSize={10} fill="var(--ink-3)" className="mono">midnight</text>
+        <text x={X(horizon) - 2} y={axisY + 16} textAnchor="end" fontSize={10} fill="var(--ink-3)" className="mono">+30d</text>
+
+        {fanTop.length > 0 && (
+          <>
+            <polygon points={[...fanTop, ...[...fanBot].reverse()].join(' ')} fill="rgba(232,163,61,0.08)" stroke="none" />
+            <polyline points={median.join(' ')} fill="none" stroke="var(--amber)" strokeWidth={1.5} strokeDasharray="5 4" />
+          </>
+        )}
+
+        <line x1={X(now)} x2={X(now)} y1={padT} y2={axisY} stroke="rgba(0,0,0,0.15)" strokeWidth={1} />
+        <text x={X(now)} y={padT - 5} textAnchor="middle" fontSize={9} fill="var(--ink-3)" className="mono" letterSpacing="0.08em">NOW</text>
+
+        <polyline points={actual} fill="none" stroke="#111" strokeWidth={2} strokeLinejoin="round" />
+      </svg>
+      <div className="chart-tag num">Stripe + Alpaca paper desk · fan = {s.forecasters.length ? `${s.forecasters.length} real model forecasts` : 'awaiting real forecasts'}</div>
+    </div>
+  )
+}
+
 function ForecasterRow() {
   const s = useEngineTick()
   const fs = s.forecasters
@@ -305,6 +408,9 @@ function Report() {
 function RevenueToday() {
   const s = useEngineTick()
   const r = s.stripeToday
+  const stripe = r?.live ? r.grossCents / 100 : 0
+  const desk = deskPnl(s.positions, s.assets, s.tradingRevenue)
+  const total = stripe + Math.max(0, desk)
   return (
     <div className="panel-plain revtoday">
       <div className="revtoday-main">
@@ -320,9 +426,16 @@ function RevenueToday() {
                 STRIPE OFF
               </span>
             )}
+            {s.ordersLive ? <span className="testmode live" style={{ marginLeft: 8 }}>ALPACA PAPER</span> : <span className="testmode off" style={{ marginLeft: 8 }}>ALPACA OFF</span>}
           </div>
           <div className="revtoday-amount num">
-            {r?.live ? `$${(r.grossCents / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
+            ${total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </div>
+          <div className="revtoday-sub num" style={{ marginTop: 6 }}>
+            Stripe ${stripe.toFixed(2)}
+            {' · '}desk {desk >= 0 ? '+' : ''}${desk.toFixed(2)}
+            {s.unrealizedPnl !== 0 ? ` (open ${s.unrealizedPnl >= 0 ? '+' : ''}$${s.unrealizedPnl.toFixed(2)})` : ''}
+            {s.paperEquity != null ? ` · paper equity $${s.paperEquity.toFixed(0)}` : ''}
           </div>
         </div>
         {r?.live ? (
@@ -336,27 +449,59 @@ function RevenueToday() {
               <span className="v">${(r.refundCents / 100).toFixed(2)}</span>
             </div>
             <div className="tstat">
-              <span className="k">fees</span>
-              <span className="v">${(r.feeCents / 100).toFixed(2)}</span>
+              <span className="k">desk P&L</span>
+              <span className="v" style={{ color: desk >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                {desk >= 0 ? '+' : ''}${desk.toFixed(2)}
+              </span>
             </div>
             <div className="tstat">
               <span className="k">net</span>
-              <span className="v" style={{ color: r.netCents >= 0 ? 'var(--green)' : 'var(--red)' }}>
-                ${(r.netCents / 100).toFixed(2)}
+              <span className="v" style={{ color: r.netCents / 100 + desk >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                ${(r.netCents / 100 + desk).toFixed(2)}
               </span>
             </div>
           </div>
         ) : (
-          <div className="revtoday-note dim-label">{r?.note ?? 'connecting to backend…'}</div>
+          <div className="treasury-stats num">
+            <div className="tstat">
+              <span className="k">desk P&L</span>
+              <span className="v" style={{ color: desk >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                {desk >= 0 ? '+' : ''}${desk.toFixed(2)}
+              </span>
+            </div>
+            <div className="tstat">
+              <span className="k">realized</span>
+              <span className="v">{s.tradingRevenue >= 0 ? '+' : ''}{s.tradingRevenue.toFixed(2)}</span>
+            </div>
+            <div className="tstat">
+              <span className="k">open</span>
+              <span className="v">{s.unrealizedPnl >= 0 ? '+' : ''}{s.unrealizedPnl.toFixed(2)}</span>
+            </div>
+          </div>
         )}
       </div>
-      {r?.live && <div className="revtoday-sub num">since local midnight · polled every 60s · read-only</div>}
+      <div className="revtoday-sub num">Stripe since midnight · desk marks to market every tick · Alpaca paper</div>
     </div>
   )
 }
 
 // where the company's real costs draw from: Perflo until the limit,
 // then overflow to Stripe — both pools shown honestly
+function CreditMeter() {
+  const s = useEngineTick()
+  const c = s.credits
+  const low = c.balance <= 8
+  return (
+    <div className="funding-row" style={{ marginTop: 8 }}>
+      <span className="funding-label">agent credits</span>
+      <b style={{ color: low ? 'var(--rose)' : undefined }}>{c.balance}</b>
+      <span className="dim-label">
+        {c.bought === 0 ? 'Credit Buyer buys a $9 mock pack when ≤8 left' : `${c.bought} pack${c.bought === 1 ? '' : 's'} bought · last $${c.lastCost}`}
+      </span>
+    </div>
+  )
+}
+
 function FundingMeter() {
   const s = useEngineTick()
   const f = s.funding
@@ -424,6 +569,7 @@ function BankPanel() {
         </div>
         {bank.note && <div className="bank-note">CFO: {bank.note}</div>}
         <FundingMeter />
+        <CreditMeter />
         <div className="bank-review num">
           {!bank.review && <span className="dim-label">—</span>}
           {bank.review?.status === 'proposing' && <span className="dim-label">CFO Agent dividing the account…</span>}
@@ -447,6 +593,29 @@ function BankPanel() {
             <span className="dim-label">human review skipped — {bank.review.note}</span>
           )}
         </div>
+        <div className="bank-legal">
+          <button
+            className="start-pill"
+            type="button"
+            disabled={s.legalFinance.status === 'hiring' || s.legalFinance.status === 'waiting'}
+            onClick={() => void engine.hireLegalFinance()}
+          >
+            Terac · legal finances
+          </button>
+          <span className="dim-label">
+            {s.legalFinance.status === 'idle' && 'Hire a human to review the books'}
+            {s.legalFinance.status === 'hiring' && 'Opening Terac opportunity…'}
+            {s.legalFinance.status === 'waiting' && (s.legalFinance.verdict ?? 'Waiting on a human')}
+            {s.legalFinance.status === 'approved' && `${s.legalFinance.expert ?? 'Human'} approved — ${s.legalFinance.verdict}`}
+            {s.legalFinance.status === 'revised' && `${s.legalFinance.expert ?? 'Human'} flagged — ${s.legalFinance.verdict}`}
+            {s.legalFinance.status === 'error' && (s.legalFinance.verdict ?? 'Hire failed')}
+          </span>
+          {s.legalFinance.dashboardUrl && (
+            <a className="terac-job num" href={s.legalFinance.dashboardUrl} target="_blank" rel="noreferrer">
+              {s.legalFinance.jobId ?? 'dashboard'}
+            </a>
+          )}
+        </div>
       </div>
     </div>
   )
@@ -457,7 +626,7 @@ export default function Finance() {
     <div className="finance">
       <RevenueToday />
       <div className="fin-chart">
-        <ForecastChart />
+        {LIVE_ONLY ? <RealRevenueChart /> : <ForecastChart />}
       </div>
       <ForecasterRow />
       <div className="fin-bottom three">

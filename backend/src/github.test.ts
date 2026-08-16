@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { commitsPerDay, extractFeatures, featureModule, isSdkShipFile, parseConventional, parsePrNumber, pickDefaultRepo } from './github.ts'
+import { GITHUB_WRITE_HINT, commitsPerDay, extractFeatures, featureModule, isSdkShipFile, parseConventional, parsePrNumber, pickDefaultRepo } from './github.ts'
 
 describe('parseConventional', () => {
   it('reads feat with a PascalCase scope', () => {
@@ -64,10 +64,10 @@ describe('extractFeatures', () => {
     expect(features).toHaveLength(0)
   })
 
-  it('reads AgentBasis python-sdk style: merged PRs + Add/Enhance commits, skips tests', () => {
+  it('reads merged PRs + Add/Enhance commits, skips tests', () => {
     const features = extractFeatures(
       [
-        { sha: 'fe606e9xxxx', message: 'Merge pull request #4 from AgentBasis/anthropic_tool_improvement', at: t, pr: 4 },
+        { sha: 'fe606e9xxxx', message: 'Merge pull request #4 from acme/anthropic_tool_improvement', at: t, pr: 4 },
         { sha: '8fdaa22xxxx', message: 'Enhance OpenTelemetry tracing by adding tool count attributes', at: t - 1, pr: null },
         { sha: 'e803f5cxxxx', message: 'all tests passed', at: t - 2, pr: null },
         { sha: '12d5c05xxxx', message: 'Add unit tests for tool count and tool use names', at: t - 3, pr: null },
@@ -91,19 +91,27 @@ describe('commitsPerDay', () => {
 })
 
 describe('pickDefaultRepo', () => {
-  it('is pinned to the AgentBasis python SDK — no other repo', () => {
+  it('is pinned to AliUraish/Buisness_Agent', () => {
     expect(pickDefaultRepo('AliUraish', [{ fullName: 'AliUraish/Agentalize', pushedAt: 8, private: false }], 'AliUraish/PocketX')).toBe(
-      'AgentBasis/agentbasis-python-sdk',
+      'AliUraish/Buisness_Agent',
     )
   })
 })
 
+describe('GITHUB_WRITE_HINT', () => {
+  it('names Contents + Pull requests for a fine-grained PAT', () => {
+    expect(GITHUB_WRITE_HINT).toMatch(/Contents/)
+    expect(GITHUB_WRITE_HINT).toMatch(/Pull requests/)
+  })
+})
+
 describe('isSdkShipFile', () => {
-  it('only allows python modules under agentbasis/', () => {
-    expect(isSdkShipFile('agentbasis/llms/openai/tool_spans.py')).toBe(true)
-    expect(isSdkShipFile('/agentbasis/context_redaction.py')).toBe(true)
+  it('only allows files under product/', () => {
+    expect(isSdkShipFile('product/llms/openai/tool_spans.py')).toBe(true)
+    expect(isSdkShipFile('/product/context_redaction.py')).toBe(true)
+    expect(isSdkShipFile('product/terac-ship-form.md')).toBe(true)
     expect(isSdkShipFile('src/auth/sso.ts')).toBe(false)
-    expect(isSdkShipFile('agentbasis/../secrets.py')).toBe(false)
+    expect(isSdkShipFile('product/../secrets.py')).toBe(false)
     expect(isSdkShipFile('agentbasis/readme.md')).toBe(false)
   })
 })

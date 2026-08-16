@@ -215,6 +215,9 @@ function LlmLedger() {
       <div className="kicker-row">
         <div className="kicker">
           This company cost <span className="num">${s.spendToday.toFixed(2)}</span> to operate today.
+          {' · '}
+          credits <span className="num">{s.credits.balance}</span>
+          {s.credits.bought > 0 ? ` · Credit Buyer bought ${s.credits.bought} pack${s.credits.bought === 1 ? '' : 's'}` : ''}
         </div>
         <div className="donut-wrap">
           <SpendDonut byDept={byDept} total={totalCost} />
@@ -250,7 +253,7 @@ function PostLedger() {
             <div className="post-top">
               <span className="post-avatar">Z</span>
               <span className="post-who">
-                Business_Agent <span className="dim">@business_agent · {ago(p.at, now)}</span>
+                Bob the Busines <span className="dim">@business_agent · {ago(p.at, now)}</span>
               </span>
               {p.actual == null ? (
                 <span className="post-verdict dim num">measuring…</span>

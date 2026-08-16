@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AUDIENCE, CLUSTERS, clusterCentroid, clusterCounts, layoutPeople, Follower, Tie } from '../data/audience'
 import { CampaignSim, DraftPost, JURY, JuryVote, engine } from '../sim/engine'
-import { refreshTeracStatus } from '../sim/terac'
 import { fetchTryteracAudience } from '../sim/xAudience'
 import { useEngineTick } from '../App'
 
@@ -26,7 +25,7 @@ const STAGE_LABEL: Record<CampaignSim['stage'], string> = {
   queuing: 'queuing 5 posts',
   writing: '5 agents drafting',
   voting: '9 agents voting',
-  reviewing: 'Terac gate',
+  reviewing: 'jury picked a winner',
   posted: 'posted to X (mock)',
 }
 
@@ -78,7 +77,7 @@ function ProductQueue() {
         <span className="aud-sim-kicker">Product queue</span>
         <span className="aud-sim-title">
           {s.github.live
-            ? `${waiting} committed feature${waiting === 1 ? '' : 's'} to post from agentbasis-python-sdk`
+            ? `${waiting} committed feature${waiting === 1 ? '' : 's'} to post${s.github.repo ? ` from ${s.github.repo}` : ''}`
             : 'Waiting on GitHub — Product sends features here after a scan'}
         </span>
         {s.github.repo && <span className="prod-queue-repo num">{s.github.repo}</span>}
@@ -108,19 +107,8 @@ function ProductQueue() {
 }
 
 function SimPanel({ sim }: { sim: CampaignSim }) {
-  const [teracLive, setTeracLive] = useState(false)
-  useEffect(() => {
-    let alive = true
-    void refreshTeracStatus().then((live) => {
-      if (alive) setTeracLive(live)
-    })
-    return () => {
-      alive = false
-    }
-  }, [])
   const winner = sim.drafts.find((d) => d.id === sim.winnerId)
   const canStart = !sim.busy
-  const live = teracLive || sim.terac.live
   const s = useEngineTick()
   const pick = s.marketingQueue.find((q) => q.id === s.marketingPick && q.status === 'queued')
   return (
@@ -129,7 +117,6 @@ function SimPanel({ sim }: { sim: CampaignSim }) {
       <div className="aud-sim-head">
         <div>
           <span className="testmode">MOCK DATA</span>
-          {live ? <span className="testmode live">TERAC LIVE</span> : <span className="testmode off">TERAC OFF</span>}
           <span className="aud-sim-kicker">Writer Bench</span>
           <span className="aud-sim-title">
             {sim.stage === 'idle'
@@ -146,31 +133,6 @@ function SimPanel({ sim }: { sim: CampaignSim }) {
           </button>
         </div>
       </div>
-      {sim.terac.status !== 'idle' && (
-        <div className={'terac-strip' + (sim.terac.status === 'revised' || sim.terac.status === 'error' ? ' rev' : '')}>
-          <span className="terac-kicker">Terac</span>
-          <span>
-            {sim.terac.status === 'hiring' && `Opening opportunity · ${sim.terac.title}`}
-            {sim.terac.status === 'waiting' && (sim.terac.verdict ?? 'Waiting on a verified expert')}
-            {sim.terac.status === 'reviewing' && `${sim.terac.expert ?? 'Expert'} reviewing the winning draft`}
-            {sim.terac.status === 'error' && (sim.terac.verdict ?? 'Hire failed')}
-            {(sim.terac.status === 'approved' || sim.terac.status === 'revised') && (
-              <>
-                <b>{sim.terac.expert ?? 'Terac expert'}</b>
-                {sim.terac.quote != null ? ` · $${sim.terac.quote}` : ''}
-                {` — ${sim.terac.verdict}`}
-              </>
-            )}
-          </span>
-          {sim.terac.dashboardUrl ? (
-            <a className="terac-job num" href={sim.terac.dashboardUrl} target="_blank" rel="noreferrer">
-              {sim.terac.jobId ?? 'dashboard'}
-            </a>
-          ) : (
-            sim.terac.jobId && <span className="terac-job num">{sim.terac.jobId}</span>
-          )}
-        </div>
-      )}
       <div className="draft-row">
         {sim.drafts.map((d) => (
           <DraftCard key={d.id} d={d} sim={sim} winner={winner?.id === d.id} />

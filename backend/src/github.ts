@@ -1,16 +1,22 @@
 // Owns the GitHub REST scan and the agent ship writes. The token stays here —
-// Cockpit never sees it. Pinned to AgentBasis/agentbasis-python-sdk.
+// Cockpit never sees it. Repo comes from GITHUB_REPO.
 
-import { GITHUB_TOKEN } from './env.ts'
+import { COMPANY_NAME, GITHUB_REPO, GITHUB_TOKEN } from './env.ts'
 
 const BASE = 'https://api.github.com'
-export const FOCUS_REPO = 'AgentBasis/agentbasis-python-sdk'
+export const FOCUS_REPO = GITHUB_REPO
+export function isGithubLive() {
+  return Boolean(GITHUB_TOKEN)
+}
 const SKIP_TYPES = new Set(['chore', 'docs', 'test', 'ci', 'style', 'build', 'revert'])
 const SKIP_SCOPES = new Set(['tests', 'test', 'docs', 'ci', 'chore'])
 const GENERIC_SCOPES = new Set(['app', 'core', 'main', 'misc', 'src', 'repo', 'api', 'env', 'hooks', 'example', 'frontend', 'backend', 'demo'])
 
-export function isGithubLive(): boolean {
-  return Boolean(GITHUB_TOKEN)
+export const GITHUB_WRITE_HINT =
+  'Fine-grained PAT on this repo: Contents (read and write) + Pull requests (read and write). Classic PAT: repo (or public_repo if the repo is public).'
+
+function canPushFrom(json: any): boolean {
+  return Boolean(json?.permissions?.push || json?.permissions?.admin)
 }
 
 export interface GithubCommit {
@@ -61,6 +67,7 @@ export interface GithubScan {
   commitsPerDay: number[]
   openPRs: number
   repos: GithubRepoInfo[]
+  canPush: boolean
 }
 
 export function parsePrNumber(message: string): number | null {
@@ -281,6 +288,7 @@ function offScan(error: string, repos: GithubRepoInfo[] = [], login: string | nu
     commitsPerDay: Array.from({ length: 14 }, () => 0),
     openPRs: 0,
     repos,
+    canPush: false,
   }
 }
 
@@ -297,6 +305,34 @@ async function fetchPages<T>(path: string, maxPages: number, perPage: number): P
   return { rows, error: null, status: 200 }
 }
 
+export async function githubStatus(): Promise<{
+  live: boolean
+  repo: string | null
+  login: string | null
+  canPush: boolean
+  hint: string
+  error: string | null
+}> {
+  if (!isGithubLive()) {
+    return { live: false, repo: FOCUS_REPO || null, login: null, canPush: false, hint: GITHUB_WRITE_HINT, error: 'Set GITHUB_TOKEN in .env, then restart the backend.' }
+  }
+  const user = await ghget('/user')
+  const login = user.ok ? String(user.json?.login ?? '') || null : null
+  if (!FOCUS_REPO) {
+    return { live: user.ok, repo: null, login, canPush: false, hint: GITHUB_WRITE_HINT, error: user.ok ? 'Set GITHUB_REPO=owner/name' : errMsg(user.json, `GitHub ${user.status}`) }
+  }
+  const repo = await ghget(`/repos/${FOCUS_REPO}`)
+  const canPush = canPushFrom(repo.json)
+  return {
+    live: user.ok && repo.ok,
+    repo: FOCUS_REPO,
+    login,
+    canPush,
+    hint: GITHUB_WRITE_HINT,
+    error: !user.ok ? errMsg(user.json, `GitHub ${user.status}`) : !repo.ok ? errMsg(repo.json, `GitHub ${repo.status}`) : canPush ? null : GITHUB_WRITE_HINT,
+  }
+}
+
 export async function listRepos(): Promise<{ login: string | null; repos: GithubRepoInfo[]; error: string | null }> {
   if (!isGithubLive()) {
     return { login: null, repos: [], error: 'Set GITHUB_TOKEN in the workspace .env, then restart the backend.' }
@@ -306,13 +342,15 @@ export async function listRepos(): Promise<{ login: string | null; repos: Github
   if (!user.ok) return { login: null, repos: [], error: errMsg(user.json, `GitHub ${user.status}`) }
   return {
     login,
-    repos: [{ fullName: FOCUS_REPO, pushedAt: Date.now(), private: false }],
-    error: null,
+    repos: FOCUS_REPO ? [{ fullName: FOCUS_REPO, pushedAt: Date.now(), private: false }] : [],
+    error: FOCUS_REPO ? null : 'Set GITHUB_REPO=owner/name in .env, then restart the backend.',
   }
 }
 
-export function pickDefaultRepo(_login: string | null, _repos: GithubRepoInfo[], _requested?: string | null): string | null {
-  return FOCUS_REPO
+export function pickDefaultRepo(_login: string | null, repos: GithubRepoInfo[], requested?: string | null): string | null {
+  if (FOCUS_REPO) return FOCUS_REPO
+  if (requested) return requested
+  return repos[0]?.fullName ?? null
 }
 
 function asCommit(c: any): GithubCommit | null {
@@ -349,6 +387,9 @@ const TTL = 20_000
 
 export async function scanRepo(_requested?: string | null): Promise<GithubScan> {
   const repo = FOCUS_REPO
+  if (!repo) {
+    return offScan('Set GITHUB_REPO=owner/name in .env, then restart the backend.')
+  }
   if (cache && cache.key === repo && Date.now() - cache.at < TTL) return cache.payload
 
   if (!isGithubLive()) {
@@ -359,7 +400,8 @@ export async function scanRepo(_requested?: string | null): Promise<GithubScan> 
   const login = user.ok ? String(user.json?.login ?? '') || null : null
   const pinned: GithubRepoInfo[] = [{ fullName: repo, pushedAt: Date.now(), private: false }]
 
-  const [commitPage, prPage] = await Promise.all([
+  const [meta, commitPage, prPage] = await Promise.all([
+    ghget(`/repos/${repo}`),
     fetchPages<any>(`/repos/${repo}/commits`, 2, 100),
     fetchPages<any>(`/repos/${repo}/pulls?state=all`, 2, 50),
   ])
@@ -368,6 +410,7 @@ export async function scanRepo(_requested?: string | null): Promise<GithubScan> 
     return {
       ...offScan(`${repo}: ${commitPage.error}`, pinned, login),
       repo,
+      canPush: canPushFrom(meta.json),
     }
   }
 
@@ -386,6 +429,7 @@ export async function scanRepo(_requested?: string | null): Promise<GithubScan> 
     commitsPerDay: commitsPerDay(commits),
     openPRs: prs.filter((p) => p.state === 'open').length,
     repos: pinned,
+    canPush: canPushFrom(meta.json),
   }
   cache = { key: repo, at: Date.now(), payload }
   return payload
@@ -413,7 +457,7 @@ export interface GithubShipResult {
 
 export function isSdkShipFile(file: string): boolean {
   const f = file.replace(/^\/+/, '')
-  return f.startsWith('agentbasis/') && !f.includes('..') && f.endsWith('.py')
+  return f.startsWith('product/') && !f.includes('..') && (f.endsWith('.py') || f.endsWith('.ts') || f.endsWith('.md'))
 }
 
 export function featureModule(input: { slug: string; name: string; summary: string; brief: string }): string {
@@ -424,7 +468,7 @@ ${input.summary}
 
 ${input.brief}
 
-Shipped by Business_Agent Repo Agent after Changelog Scout / Gap Analyst / Brief Writer research.
+Shipped by ${COMPANY_NAME} Repo Agent after Changelog Scout / Gap Analyst / Brief Writer research.
 """
 from __future__ import annotations
 
@@ -441,12 +485,43 @@ def apply(span: Optional[Any] = None, **attrs: Any) -> None:
     set_attr = getattr(span, "set_attribute", None)
     if not callable(set_attr):
         return
-    set_attr("agentbasis.feature", FEATURE)
+    set_attr("product.feature", FEATURE)
     for key, value in attrs.items():
         if value is None:
             continue
-        set_attr(f"agentbasis.{key}", value)
+        set_attr(f"product.{key}", value)
 `
+}
+
+export function featureNote(input: { slug: string; name: string; summary: string; brief: string }): string {
+  return `# ${input.name}
+
+${input.summary}
+
+${input.brief}
+
+Opened by **${COMPANY_NAME}** Repo Agent on \`${FOCUS_REPO}\` after Changelog Scout / Gap Analyst / Brief Writer research.
+`
+}
+
+export function featureTs(input: { slug: string; name: string; summary: string; brief: string }): string {
+  const slug = input.slug.replace(/[^a-z0-9_-]/gi, '_')
+  return `/** ${input.name}
+ * ${input.summary}
+ *
+ * ${input.brief}
+ *
+ * Opened by ${COMPANY_NAME} Repo Agent.
+ */
+export const FEATURE = ${JSON.stringify(slug)}
+export const SUMMARY = ${JSON.stringify(input.summary)}
+`
+}
+
+export function featureFile(input: { slug: string; name: string; summary: string; brief: string }, file: string): string {
+  if (file.endsWith('.md')) return featureNote(input)
+  if (file.endsWith('.ts') || file.endsWith('.tsx')) return featureTs(input)
+  return featureModule(input)
 }
 
 function emptyShip(file: string, error: string): GithubShipResult {
@@ -467,6 +542,9 @@ export async function shipFeature(input: GithubShipInput): Promise<GithubShipRes
   if (!isGithubLive()) {
     return emptyShip(input.file, 'Set GITHUB_TOKEN in the workspace .env, then restart the backend.')
   }
+  if (!FOCUS_REPO) {
+    return emptyShip(input.file, 'Set GITHUB_REPO=owner/name in .env, then restart the backend.')
+  }
 
   const repo = FOCUS_REPO
   const meta = await ghget(`/repos/${repo}`)
@@ -477,7 +555,7 @@ export async function shipFeature(input: GithubShipInput): Promise<GithubShipRes
   const sha = String(ref.json?.object?.sha ?? '')
   if (!sha) return emptyShip(input.file, `No SHA for ${base}`)
 
-  const stem = `business_agent/${input.slug}`.replace(/[^a-z0-9/_-]+/gi, '-').replace(/\/{2,}/g, '/').slice(0, 48)
+  const stem = `bob/${input.slug}`.replace(/[^a-z0-9/_-]+/gi, '-').replace(/\/{2,}/g, '/').slice(0, 48)
   let branch = stem
   let created = await ghreq(`/repos/${repo}/git/refs`, {
     method: 'POST',
@@ -496,20 +574,23 @@ export async function shipFeature(input: GithubShipInput): Promise<GithubShipRes
 
   let file = input.file.replace(/^\/+/, '')
   if (!isSdkShipFile(file)) {
-    return emptyShip(file, 'Ship files must be python modules under agentbasis/')
+    return emptyShip(file, 'Ship files must live under product/')
   }
   const putBody = {
     message: `feat: ${input.name}\n\n${input.summary}\n\n${input.brief}`,
-    content: Buffer.from(featureModule(input), 'utf8').toString('base64'),
+    content: Buffer.from(featureFile(input, file), 'utf8').toString('base64'),
     branch,
   }
   let put = await ghreq(`/repos/${repo}/contents/${file}`, { method: 'PUT', body: putBody, timeoutMs: 45000 })
   if (!put.ok && (put.status === 422 || put.status === 409)) {
-    const tagged = file.replace(/\.py$/, `_${Date.now().toString(36).slice(-4)}.py`)
+    const tagged = file.replace(/(\.[a-z]+)$/i, `_${Date.now().toString(36).slice(-4)}$1`)
     put = await ghreq(`/repos/${repo}/contents/${tagged}`, { method: 'PUT', body: putBody, timeoutMs: 45000 })
     if (put.ok) file = tagged
   }
-  if (!put.ok) return emptyShip(file, errMsg(put.json, `GitHub ${put.status}`))
+  if (!put.ok) {
+    const msg = errMsg(put.json, `GitHub ${put.status}`)
+    return emptyShip(file, put.status === 403 ? `${msg} — ${GITHUB_WRITE_HINT}` : msg)
+  }
   const commitSha = String(put.json?.commit?.sha ?? put.json?.content?.sha ?? '')
 
   const pr = await ghreq(`/repos/${repo}/pulls`, {
@@ -520,30 +601,45 @@ export async function shipFeature(input: GithubShipInput): Promise<GithubShipRes
       base,
       body:
         `## Research\n${input.brief}\n\n## Summary\n${input.summary}\n\n` +
-        `Opened and merged by Business_Agent Repo Agent on ${repo}.`,
+        `Opened by ${COMPANY_NAME} Repo Agent on ${repo}. Leave open for review, then merge.`,
     },
     timeoutMs: 45000,
   })
-  if (!pr.ok) return emptyShip(file, errMsg(pr.json, `GitHub ${pr.status}`))
+  if (!pr.ok) {
+    const msg = errMsg(pr.json, `GitHub ${pr.status}`)
+    return emptyShip(file, pr.status === 403 ? `${msg} — ${GITHUB_WRITE_HINT}` : msg)
+  }
   const number = Number(pr.json?.number)
   const url = pr.json?.html_url != null ? String(pr.json.html_url) : null
   const title = String(pr.json?.title ?? `feat: ${input.name}`)
+  cache = null
+  return {
+    live: true,
+    merged: false,
+    number,
+    title,
+    branch,
+    file,
+    sha: commitSha.slice(0, 40),
+    url,
+    error: null,
+  }
+}
 
-  const merged = await ghreq(`/repos/${repo}/pulls/${number}/merge`, {
+export async function mergePullRequest(number: number): Promise<{ live: boolean; merged: boolean; sha: string; error: string | null }> {
+  if (!isGithubLive() || !FOCUS_REPO) {
+    return { live: isGithubLive(), merged: false, sha: '', error: 'Set GITHUB_TOKEN and GITHUB_REPO, then restart the backend.' }
+  }
+  const merged = await ghreq(`/repos/${FOCUS_REPO}/pulls/${number}/merge`, {
     method: 'PUT',
-    body: { merge_method: 'squash', commit_title: `feat: ${input.name} (#${number})` },
+    body: { merge_method: 'squash', commit_title: `feat: merge #${number}` },
     timeoutMs: 45000,
   })
   cache = null
   return {
     live: true,
     merged: merged.ok,
-    number,
-    title,
-    branch,
-    file,
-    sha: String(merged.json?.sha ?? commitSha).slice(0, 40),
-    url,
+    sha: String(merged.json?.sha ?? '').slice(0, 40),
     error: merged.ok ? null : errMsg(merged.json, `merge ${merged.status}`),
   }
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Asset, LIVE_ONLY, MarketRound, TradeGate } from '../sim/engine'
+import { Asset, MarketRound, TradeGate, engine } from '../sim/engine'
 import { useEngineTick } from '../App'
 
 function clock(ts: number) {
@@ -48,6 +48,7 @@ function TreasuryPanel() {
         <div>
           <div className="mrr-label">
             Treasury <span className="alpaca-chip">{feedLabel}</span>
+            {s.paperEquity != null && <span className="alpaca-chip">paper equity ${s.paperEquity.toFixed(0)}</span>}
           </div>
           <div className="treasury-cash num">${t.cash.toLocaleString()}</div>
         </div>
@@ -57,8 +58,14 @@ function TreasuryPanel() {
             <span className="v">${t.burnMo.toLocaleString()}</span>
           </div>
           <div className="tstat">
-            <span className="k">revenue / mo</span>
+            <span className="k">revenue</span>
             <span className="v" style={{ color: 'var(--green)' }}>${s.mrr.toLocaleString()}</span>
+          </div>
+          <div className="tstat">
+            <span className="k">desk P&L</span>
+            <span className="v" style={{ color: s.tradingRevenue >= 0 ? 'var(--green)' : 'var(--red)' }}>
+              {s.tradingRevenue >= 0 ? '+' : ''}${s.tradingRevenue.toFixed(0)}
+            </span>
           </div>
           <div className="tstat">
             <span className="k">net</span>
@@ -150,8 +157,8 @@ function DeskPanel() {
     return (
       <div className="panel-plain desk">
         <div className="ledger-head">
-          <span>Prediction round · 30d ROI</span>
-          <span className="dim-label">desk paused — awaiting LLM API keys; live prices above are real (Alpaca)</span>
+        <span>Prediction round · 30d ROI</span>
+        <span className="dim-label">desk opening a paper round…</span>
         </div>
       </div>
     )
@@ -163,8 +170,17 @@ function DeskPanel() {
       <div className="ledger-head">
         <span>Prediction round · 30d ROI</span>
         <span className="dim-label num">
-          {round.status === 'predicting' ? `${done}/5 agents in` : round.status === 'ranked' ? 'ranked — deploying' : `executed · ${clock(round.at)}`}
+          {round.status === 'predicting'
+            ? `${done}/5 agents in`
+            : round.terac.status === 'waiting' || round.terac.status === 'hiring'
+              ? 'ranked — waiting on Terac form'
+              : round.status === 'ranked'
+                ? 'ranked — deploying'
+                : `executed · ${clock(round.at)}`}
         </span>
+        <button className="start-pill" type="button" onClick={() => engine.tradeNow()}>
+          Trade now
+        </button>
       </div>
       <div className="desk-scroll">
         <table className="ledger-table num desk-table">
@@ -222,7 +238,11 @@ function DeskPanel() {
                 <span className="chip">{round.orderId}</span>
               </>
             ) : (
-              <>→ deploying ${round.amount} into {bySym(round.winner!).symbol} — highest consensus ROI</>
+              <>
+                → {round.terac.status === 'waiting' || round.terac.status === 'hiring'
+                  ? `holding $${round.amount} ${bySym(round.winner!).symbol} until the Terac form is filled`
+                  : `deploying $${round.amount} into ${bySym(round.winner!).symbol} — highest consensus ROI`}
+              </>
             )}
           </span>
         </div>
@@ -234,17 +254,15 @@ function DeskPanel() {
 
 // mirrors the audience Terac strip: hired human, stated confidence, receipts
 function TradeGateStrip({ gate }: { gate: TradeGate }) {
+  const s = useEngineTick()
   return (
     <div className="trade-gate">
       {gate.live ? <span className="testmode live">TERAC LIVE</span> : <span className="testmode off">TERAC OFF</span>}
+      {s.teracMcp.live ? <span className="testmode live">MCP</span> : <span className="testmode off">MCP OFF</span>}
       <span className="terac-kicker">Terac</span>
-      {gate.status === 'hiring' && <span className="dim">hiring a crypto expert…</span>}
-      {gate.status === 'waiting' && (
-        <span className="dim">
-          expert reviewing the trade…
-          {gate.confidence != null && <> deploying on desk consensus meanwhile</>}
-        </span>
-      )}
+      {gate.status === 'hiring' && <span className="dim">opening the Terac form…</span>}
+      {gate.status === 'waiting' && <span className="dim">holding the fill — waiting on the Terac form</span>}
+      {gate.status === 'error' && <span className="dim">no form yet — {gate.note ?? 'holding the fill'}</span>}
       {(gate.status === 'expert' || gate.status === 'desk') && gate.confidence != null && (
         <>
           <span className="conf-track">
@@ -284,6 +302,10 @@ function PositionsPanel() {
           ${totalNow.toFixed(0)} mkt · uP&L{' '}
           <b style={{ color: totalPnl >= 0 ? 'var(--green)' : 'var(--red)' }}>
             {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}
+          </b>
+          {' · '}realized{' '}
+          <b style={{ color: s.tradingRevenue >= 0 ? 'var(--green)' : 'var(--red)' }}>
+            {s.tradingRevenue >= 0 ? '+' : ''}${s.tradingRevenue.toFixed(2)}
           </b>
         </span>
       </div>
@@ -333,7 +355,7 @@ export default function Investment() {
   useNow(10_000) // keep clocks fresh between engine emits
   return (
     <div className="investment">
-      {!LIVE_ONLY && <TreasuryPanel />}
+      <TreasuryPanel />
       <MarketsRow />
       <DeskPanel />
       <PositionsPanel />

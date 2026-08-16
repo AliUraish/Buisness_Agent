@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ShipGate, ShipJob, ShipStage } from '../sim/engine'
+import { ShipGate, ShipJob, ShipStage, teracVerifyLabel } from '../sim/engine'
 import { useEngineTick } from '../App'
 
 function ago(ts: number, now: number) {
@@ -28,7 +28,7 @@ const STATUS_LABEL: Record<string, string> = {
 const STAGE_LABEL: Record<ShipStage, string> = {
   researching: 'researching',
   briefed: 'brief forwarded',
-  building: 'revising the python SDK…',
+  building: 'revising the product…',
   'pr-open': 'PR open on GitHub',
   'hiring-verify': 'hiring verifier…',
   'awaiting-verify': 'waiting on verify',
@@ -149,11 +149,15 @@ function ShipPipeline() {
     <div className="panel-plain ship-pipe">
       <div className="ledger-head">
         <span>Research → product</span>
-        <span className="dim-label">{job ? STAGE_LABEL[job.stage] : 'watching for a gap'}</span>
+        <span className="dim-label">
+          {s.teracMcp.live ? <span className="testmode live">TERAC MCP</span> : <span className="testmode off">TERAC MCP OFF</span>}
+          {' · '}
+          {job ? STAGE_LABEL[job.stage] : 'watching for a gap'}
+        </span>
       </div>
       {!job && (
         <div className="ship-idle dim">
-          Three intel agents scan rivals. Gaps forward to product. Repo Agent researches, revises agentbasis-python-sdk, and squash-merges on GitHub — ongoing, no Terac.
+          Three intel agents scan rivals of Bob the Busines. Gaps forward to product. Repo Agent opens a PR on AliUraish/Buisness_Agent — Terac humans review, then merge.
         </div>
       )}
       {job && (
@@ -192,6 +196,13 @@ function ShipPipeline() {
               <span className="chip">{job.pr.file}</span>
               <span className="chip num">{job.pr.sha}</span>
               {job.pr.merged && <span className="chip">merged</span>}
+              {(() => {
+                const v = teracVerifyLabel(job)
+                if (v === 'verified') return <span className="v-confirmed">Terac verified</span>
+                if (v === 'reviewing') return <span className="v-reviewing">Terac reviewing</span>
+                if (v === 'not-verified') return <span className="v-notrepro">Terac not verified</span>
+                return null
+              })()}
             </div>
           )}
           {job.stage === 'blocked' && job.gate.reason && <div className="ship-brief-t">{job.gate.reason}</div>}
@@ -224,7 +235,7 @@ function CapabilityMatrix() {
           <thead>
             <tr>
               <th>capability</th>
-              <th className="c us">Business_Agent</th>
+              <th className="c us">Bob the Busines</th>
               {s.competitors.map((c) => (
                 <th className="c" key={c.id}>
                   {c.name}

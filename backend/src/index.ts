@@ -16,13 +16,14 @@ import {
 } from './terac.ts'
 import { isLinqLive, paymentLink, sendOnboard, sendSupportMessage } from './linq.ts'
 import { isStripeLive, isWhopLive, stripeSummary, stripeToday, whopSummary } from './payments.ts'
-import { complete, llmStatus, type Provider, type Tier } from './llm.ts'
+import { complete, llmStatus, rechargeCredits, type Provider, type Tier } from './llm.ts'
 import { dbStatus, getStateAll, listEvents, putState, saveEvent } from './db.ts'
 import { perfloSummary } from './perflo.ts'
 import { research, researchStatus } from './research.ts'
-import { hireAllocationReview, pollAllocationReview, type AllocationInput } from './terac.ts'
+import { hireAllocationReview, hireLegalReview, pollAllocationReview, pollLegalReview, type AllocationInput, type LegalInput } from './terac.ts'
 import { isXLive, loadTryteracAudience, snapshotStatus } from './x.ts'
-import { isGithubLive, listRepos, scanRepo, shipFeature } from './github.ts'
+import { FOCUS_REPO, githubStatus, isGithubLive, listRepos, mergePullRequest, scanRepo, shipFeature } from './github.ts'
+import { teracMcpStatus } from './terac-mcp.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -37,14 +38,6 @@ function send(res: http.ServerResponse, status: number, body: unknown) {
 
 function esc(s: string) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
-
-function sendHtml(res: http.ServerResponse, file: string) {
-  let html = readFileSync(fileURLToPath(new URL(file, import.meta.url)), 'utf8')
-  const link = paymentLink() ?? '#'
-  html = html.replaceAll('__STRIPE_LINK__', link)
-  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Access-Control-Allow-Origin': '*' })
-  res.end(html)
 }
 
 function githubHref(raw: string, fallback: string) {
@@ -65,7 +58,7 @@ async function sendReview(res: http.ServerResponse, url: URL) {
   let prTitle = q.get('prTitle') || ''
   let files = q.get('files') || ''
   let brief = q.get('brief') || q.get('post') || ''
-  let repo = q.get('repo') || 'AgentBasis/agentbasis-python-sdk'
+  let repo = q.get('repo') || FOCUS_REPO
   let prUrl = q.get('prUrl') || ''
 
   if (!feature || !pr) {
@@ -83,18 +76,19 @@ async function sendReview(res: http.ServerResponse, url: URL) {
     }
   }
 
-  const repoUrl = `https://github.com/${repo}`
-  if (!prUrl) prUrl = pr ? `${repoUrl}/pull/${pr}` : repoUrl
+  const repoUrl = repo ? `https://github.com/${repo}` : '#'
+  if (!prUrl) prUrl = pr && repo ? `${repoUrl}/pull/${pr}` : repoUrl
   prUrl = githubHref(prUrl, repoUrl)
   const prLine = [pr ? `PR #${pr}` : '', prTitle].filter(Boolean).join(' · ') || 'Open the repo for the latest commit / PR'
 
   html = html
-    .replaceAll('__FEATURE__', esc(feature || 'Latest AgentBasis change'))
+    .replaceAll('__FEATURE__', esc(feature || 'Latest change'))
     .replaceAll('__PR_LINE__', esc(prLine))
     .replaceAll('__BRIEF__', esc(brief || 'Open the PR, read the diff, then answer below.'))
     .replaceAll('__PR_URL__', prUrl)
     .replaceAll('__REPO_URL__', repoUrl)
     .replaceAll('__FILES__', esc(files || '(listed in the PR)'))
+    .replaceAll('__MODE__', esc(q.get('mode') || 'ship'))
 
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Access-Control-Allow-Origin': '*' })
   res.end(html)
@@ -143,7 +137,7 @@ const server = http.createServer(async (req, res) => {
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/github/status') {
-      send(res, 200, { live: isGithubLive() })
+      send(res, 200, await githubStatus())
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/github/repos') {
@@ -164,13 +158,19 @@ const server = http.createServer(async (req, res) => {
           name: String(b?.name ?? 'feature'),
           summary: String(b?.summary ?? ''),
           brief: String(b?.brief ?? ''),
-          file: String(b?.file ?? 'agentbasis/llms/feature.py'),
+          file: String(b?.file ?? 'product/feature.md'),
         }),
       )
       return
     }
+    if (req.method === 'POST' && url.pathname === '/api/github/merge') {
+      const b = await readJson(req)
+      send(res, 200, await mergePullRequest(Number(b?.number ?? 0)))
+      return
+    }
     if (req.method === 'GET' && url.pathname === '/api/terac/status') {
-      send(res, 200, { live: isLive() })
+      const mcp = await teracMcpStatus()
+      send(res, 200, { live: isLive(), mcp })
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/linq/status') {
@@ -195,6 +195,23 @@ const server = http.createServer(async (req, res) => {
     const alloc = url.pathname.match(/^\/api\/terac\/allocations\/([^/]+)$/)
     if (req.method === 'GET' && alloc) {
       send(res, 200, await pollAllocationReview(decodeURIComponent(alloc[1])))
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/api/terac/legal') {
+      const b = await readJson(req)
+      const input: LegalInput = {
+        bankName: String(b?.bankName ?? 'the operating account'),
+        balance: Number(b?.balance ?? 0),
+        alloc: Array.isArray(b?.alloc) ? b.alloc.map((a: any) => ({ label: String(a?.label ?? ''), pct: Number(a?.pct ?? 0) })) : [],
+        rationale: String(b?.rationale ?? '').slice(0, 1500),
+        revenueToday: String(b?.revenueToday ?? 'unknown'),
+      }
+      send(res, 200, await hireLegalReview(input))
+      return
+    }
+    const legalJob = url.pathname.match(/^\/api\/terac\/legal\/([^/]+)$/)
+    if (req.method === 'GET' && legalJob) {
+      send(res, 200, await pollLegalReview(decodeURIComponent(legalJob[1])))
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/research/status') {
@@ -242,6 +259,11 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && url.pathname === '/api/llm/status') {
       send(res, 200, llmStatus())
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/api/llm/recharge') {
+      const b = await readJson(req)
+      send(res, 200, rechargeCredits(Number(b?.pack ?? 40)))
       return
     }
     if (req.method === 'POST' && url.pathname === '/api/llm/complete') {
@@ -325,8 +347,10 @@ const server = http.createServer(async (req, res) => {
       await sendReview(res, url)
       return
     }
-    if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/subscribe' || url.pathname === '/subscribe.html')) {
-      sendHtml(res, './subscribe.html')
+    if (req.method === 'GET' && (url.pathname === '/legal' || url.pathname === '/legal.html')) {
+      const html = readFileSync(fileURLToPath(new URL('./legal.html', import.meta.url)), 'utf8')
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Access-Control-Allow-Origin': '*' })
+      res.end(html)
       return
     }
     send(res, 404, { error: 'not found' })
@@ -338,6 +362,6 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log(
-    `[backend] http://127.0.0.1:${PORT}  terac ${isLive() ? 'live' : 'off'}  x ${isXLive() ? 'live' : 'off'}  github ${isGithubLive() ? 'live' : 'off'}`,
+    `[backend] http://127.0.0.1:${PORT}  terac ${isLive() ? 'live' : 'off'}  mcp ${isLive() ? 'armed' : 'off'}  x ${isXLive() ? 'live' : 'off'}  github ${isGithubLive() ? 'live' : 'off'}`,
   )
 })

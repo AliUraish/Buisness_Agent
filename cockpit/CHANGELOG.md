@@ -2,6 +2,62 @@
 
 All notable changes to Cockpit are documented here.
 
+## [0.27.0.0] - 2026-08-15
+
+### Added
+- Agents run on a mock credit pool. **Credit Buyer** purchases a $9 pack
+  from treasury when ≤8 credits remain (also recharges the backend call cap).
+
+## [0.26.2.0] - 2026-08-15
+
+### Changed
+- Paper fills wait on the Terac form. The desk polls until a human
+  submits; High/Medium then executes, Low holds.
+
+## [0.26.1.0] - 2026-08-15
+
+### Changed
+- Desk trades by itself every ~45s. Open P&L marks into Finance revenue
+  immediately; closes after +0.3% or 90s.
+
+## [0.26.0.0] - 2026-08-15
+
+### Added
+- Market desk paper-trades on Alpaca without waiting for LLM keys. After a
+  fill it sells when the mark is +1.2% or 8 minutes old, books realized
+  P&L into company revenue (Stripe + desk), and shows paper equity.
+
+## [0.25.0.0] - 2026-08-15
+
+### Added
+- Product agents open PRs on AliUraish/Buisness_Agent. Banner shows
+  **CAN OPEN PRS** vs **READ ONLY**, plus **Open PR**. Each ship/PR
+  shows **Terac verified**, **Terac reviewing**, or **Terac not verified**.
+  Hire fail or reject leaves the PR open (not merged).
+
+## [0.24.0.0] - 2026-08-15
+
+### Changed
+- Terac is no longer the Audience post gate. Finance has **Terac · legal
+  finances** — hires a human; page is `/legal` (replace that HTML).
+
+## [0.23.0.0] - 2026-08-15
+
+### Changed
+- Product is **Bob the Busines** on
+  [AliUraish/Buisness_Agent](https://github.com/AliUraish/Buisness_Agent).
+  Every agent works that repo. Repo Agent opens PRs under `product/`;
+  Terac humans review, then merge.
+
+## [0.22.0.0] - 2026-08-15
+
+### Removed
+- AgentBasis product targeting: subscribe pages (`/subscribe`,
+  `site/subscribe.html`), agentbasis.co copy in Terac/Linq, and the
+  hardcoded `AgentBasis/agentbasis-python-sdk` GitHub pin + ship catalog.
+  Product now follows `GITHUB_REPO`. Agents ship under `product/` once
+  that repo is set.
+
 ## [0.21.0.0] - 2026-08-15
 
 ### Changed

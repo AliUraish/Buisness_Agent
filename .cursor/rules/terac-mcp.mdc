@@ -1,0 +1,19 @@
+---
+description: Use Terac MCP tools for agent-side human hires and reviews
+alwaysApply: true
+---
+
+# Terac MCP
+
+This repo must use Terac MCP for agent hires. Endpoint: `https://terac.com/api/mcp`.
+
+When this chat needs a human (ship verify, trade confidence, research, review):
+
+1. Call `terac_get_context` first.
+2. Launch with `terac_create_opportunity` then `terac_launch_draft_opportunity` (or the draft/launch tools that exist).
+3. Poll with `terac_get_submissions` / `terac_get_submission`. Do not invent a timeout-to-consensus.
+4. Approve or reject with the matching Terac MCP tools.
+
+The cockpit backend may still hire over REST (`/api/terac/*`). That loop does not replace MCP. Do not tell the user REST satisfies the hackathon MCP rule.
+
+Never paste `TERAC_API_KEY` or other secrets into chat, commits, or `mcp.json`.

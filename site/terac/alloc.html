@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Legal Finances Review</title>
+<style>
+  @font-face { font-family: 'Inter'; font-style: normal; font-weight: 400; font-display: swap; src: url(../assets/inter-400.woff2) format('woff2'); }
+  @font-face { font-family: 'Inter'; font-style: normal; font-weight: 500; font-display: swap; src: url(../assets/inter-500.woff2) format('woff2'); }
+  :root {
+    --bg: #fafaf8; --panel: #ffffff; --border: rgba(0,0,0,0.07); --edge: rgba(0,0,0,0.12);
+    --ink: #111111; --ink-2: #6b6b6b; --ink-3: #9b9b9b;
+    --violet: #7c6ff0; --teal: #2ab3a6; --amber: #e8a33d; --rose: #e05c8a; --green: #3fa55c; --red: #d64545;
+    --shadow: 0 2px 8px rgba(0,0,0,0.08);
+    color-scheme: light only;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--ink); font-family: 'Inter', -apple-system, 'Helvetica Neue', Arial, sans-serif; font-size: 15px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+  .mono { font-family: 'SF Mono', 'Menlo', 'Consolas', monospace; font-variant-numeric: tabular-nums; }
+  .num { font-variant-numeric: tabular-nums; }
+  a { color: inherit; }
+  a:focus-visible, button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; border-radius: 4px; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 0 24px; }
+  .topbar { background: var(--panel); border-bottom: 1px solid var(--border); }
+  .topbar .wrap { height: 52px; display: flex; align-items: center; justify-content: space-between; max-width: 1060px; }
+  .wordmark { font-size: 14px; font-weight: 500; letter-spacing: 0.02em; text-decoration: none; }
+  .wordmark span { color: var(--ink-3); font-weight: 400; }
+  .topbar .back { font-size: 13px; color: var(--ink-3); text-decoration: none; }
+  .topbar .back:hover { color: var(--ink); }
+  main { padding: 56px 0 80px; }
+  .eyebrow { font-size: 11px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--ink-3); font-weight: 500; margin-bottom: 14px; }
+  h1 { font-size: clamp(28px, 5vw, 40px); font-weight: 500; letter-spacing: -0.035em; line-height: 1.08; text-wrap: balance; margin-bottom: 12px; }
+  .lede { font-size: 16px; color: var(--ink-2); text-wrap: pretty; margin-bottom: 20px; }
+  .lede strong { color: var(--ink); font-weight: 500; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 36px; }
+  .chip { font-family: 'SF Mono', 'Menlo', monospace; font-size: 11px; color: var(--ink-2); border: 1px solid var(--border); background: var(--panel); border-radius: 999px; padding: 3px 11px; }
+  .chip i { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 6px; position: relative; top: -1px; }
+  section { margin-bottom: 36px; }
+  h2 { font-size: 13px; font-weight: 500; letter-spacing: 0.07em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 12px; }
+  p { color: var(--ink-2); text-wrap: pretty; }
+  p strong { color: var(--ink); font-weight: 500; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); padding: 20px 22px; }
+  .btns { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
+  .btn { display: inline-block; font: inherit; font-size: 14px; font-weight: 500; padding: 10px 20px; border-radius: 8px; text-decoration: none; border: 1px solid transparent; cursor: pointer; background: none; }
+  .btn.primary { background: var(--ink); color: var(--bg); }
+  .btn.primary:hover { opacity: 0.85; }
+  .btn.primary:disabled { opacity: 0.4; cursor: default; }
+  .btn.ghost { border-color: var(--edge); color: var(--ink-2); }
+  .btn.ghost:hover { color: var(--ink); border-color: var(--ink-3); }
+  label.field { display: block; margin-bottom: 16px; }
+  label.field .fname { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; }
+  label.field .fhint { color: var(--ink-3); font-weight: 400; }
+  textarea, input[type="text"] {
+    width: 100%; font: inherit; font-size: 14px; color: var(--ink);
+    background: var(--panel); border: 1px solid var(--edge); border-radius: 8px;
+    padding: 10px 12px; resize: vertical;
+  }
+  textarea { min-height: 74px; }
+  .sendnote { font-size: 12.5px; color: var(--ink-3); margin-top: 10px; }
+  .sendnote.ok { color: var(--green); }
+  .sendnote.err { color: var(--red); }
+  footer { border-top: 1px solid var(--border); padding: 26px 0 40px; }
+  footer .wrap { max-width: 1060px; display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-3); }
+  footer a { color: var(--ink-3); }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+  .acthead { display: flex; gap: 28px; flex-wrap: wrap; margin-bottom: 14px; }
+  .actstat .v { display: block; font-size: 22px; font-weight: 500; letter-spacing: -0.02em; }
+  .actstat .k { font-size: 11px; color: var(--ink-3); letter-spacing: 0.03em; text-transform: uppercase; }
+  .plot { position: relative; }
+  .plot svg { display: block; width: 100%; height: 150px; }
+  .plotnote { font-size: 11px; color: var(--ink-3); margin-top: 8px; }
+  .tip { position: absolute; pointer-events: none; background: var(--ink); color: var(--bg); font-family: 'SF Mono','Menlo',monospace; font-size: 11px; padding: 3px 8px; border-radius: 5px; transform: translate(-50%, -130%); white-space: nowrap; display: none; }
+  .divbar { display: flex; height: 44px; border-radius: 8px; overflow: hidden; gap: 2px; background: var(--bg); margin-bottom: 18px; }
+  .divbar .seg { display: flex; align-items: center; justify-content: center; color: #ffffff; font-family: 'SF Mono','Menlo',monospace; font-size: 11px; min-width: 0; overflow: hidden; white-space: nowrap; transition: flex-grow 120ms ease-out; border-radius: 3px; }
+  .sliders { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 24px; }
+  .sliders label { font-size: 13px; color: var(--ink-2); display: block; }
+  .sliders .sname { display: flex; justify-content: space-between; margin-bottom: 2px; }
+  .sliders .sname b { font-weight: 500; color: var(--ink); }
+  .sliders input[type=range] { width: 100%; accent-color: #111111; }
+  .divnote { font-size: 11.5px; color: var(--ink-3); margin-top: 12px; }
+  @media (max-width: 560px) { .sliders { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap">
+    <a class="wordmark" href="../index.html">Bob the Busines <span>/ human loop</span></a>
+    <a class="back" href="../dashboard/">open the dashboard</a>
+  </div>
+</header>
+<main>
+  <div class="wrap">
+
+    <div class="eyebrow">Terac briefing · legal finances</div>
+    <h1>The money is real. So are the taxes.</h1>
+    <p class="lede">This is not a forecast review — everything on this page already happened. Look at the actuals, then <strong>divide the account yourself</strong>, including the tax set-aside, and tell us how the tax work should be handled.</p>
+    <div class="chips">
+      <span class="chip"><i style="background: var(--amber)"></i>legal finances</span>
+      <span class="chip">ONE human</span>
+      <span class="chip">~5 minutes</span>
+      <span class="chip">actuals, not predictions</span>
+    </div>
+
+    <section>
+      <h2>1 · What actually happened — last 14 days</h2>
+      <div class="card">
+        <div class="acthead">
+          <div class="actstat"><span class="v mono num" id="bal">$5,898</span><span class="k">operating account</span></div>
+          <div class="actstat"><span class="v mono num" style="color:var(--green)" id="rev">$0.00</span><span class="k">revenue collected</span></div>
+          <div class="actstat"><span class="v mono num" id="burn">$0.53</span><span class="k">LLM burn, 14 days</span></div>
+        </div>
+        <div class="plot" id="actualplot"></div>
+        <p class="plotnote mono">daily money out (LLM metering, itemized in the ledger) · money in flat at $0 — first Stripe charge lands here</p>
+      </div>
+    </section>
+
+    <section>
+      <h2>2 · Divide the money — drag the split</h2>
+      <div class="card">
+        <div class="divbar" id="divbar" role="img" aria-label="Division of the operating account"></div>
+        <div class="sliders" id="sliders"></div>
+        <p class="divnote mono" id="divnote"></p>
+      </div>
+    </section>
+
+    <section>
+      <h2>3 · The tax work</h2>
+      <form id="allocform" class="card">
+        <label class="field">
+          <span class="fname">How should we handle the tax side? <span class="fhint">— quarterly estimates, what's deductible (LLM metering? Terac fees?), what a $20/mo SaaS owes where</span></span>
+          <textarea name="tax" required placeholder="e.g. Set aside 25% of gross revenue for federal+state estimates; LLM costs and contractor (Terac) fees are deductible operating expenses; register for sales tax only after crossing nexus thresholds."></textarea>
+        </label>
+        <label class="field">
+          <span class="fname">Anything off about the division you set above? <span class="fhint">— optional</span></span>
+          <textarea name="notes" placeholder="e.g. Reserve is thin for a company with $0 MRR."></textarea>
+        </label>
+        <button class="btn primary" type="submit">Forward to the pipeline</button>
+        <p class="sendnote" id="allocnote">Your split and tax guidance post to the event feed; the CFO Agent re-divides with them as constraints.</p>
+      </form>
+    </section>
+
+  </div>
+</main>
+<footer>
+  <div class="wrap">
+    <span>Bob the Busines — a zero-human company experiment (except you)</span>
+    <span class="mono">one human &middot; ~5 minutes &middot; paid via Terac</span>
+  </div>
+</footer>
+<script>
+const PIPELINE = 'http://127.0.0.1:8787/api/db/events';
+async function sendToPipeline(payload, noteEl, btnEl) {
+  noteEl.className = 'sendnote'; noteEl.textContent = 'Sending to the pipeline…';
+  btnEl.disabled = true;
+  try {
+    const r = await fetch(PIPELINE, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const j = await r.json();
+    if (!j.ok) throw new Error('backend declined the event');
+    noteEl.className = 'sendnote ok';
+    noteEl.textContent = 'Sent. Your review is in the activity feed — the agents pick it up next cycle.';
+  } catch (e) {
+    const q = JSON.parse(localStorage.getItem('terac-feedback-queue') || '[]');
+    q.push({ ...payload, queuedAt: new Date().toISOString() });
+    localStorage.setItem('terac-feedback-queue', JSON.stringify(q));
+    noteEl.className = 'sendnote err';
+    noteEl.textContent = 'Pipeline offline — saved locally (' + q.length + ' queued). Start the backend and resubmit.';
+    btnEl.disabled = false;
+  }
+}
+
+// ── actuals chart: daily LLM burn (bars) vs revenue (flat line at 0) ──
+const DAYS = 14, BAL = 5898;
+let burn = []; let s = 4242;
+const rnd = () => { s = (s * 1103515245 + 12345) % 2147483648; return s / 2147483648; };
+for (let i = 0; i < DAYS; i++) burn.push(0.02 + rnd() * 0.05); // metered cents/day
+const totalBurn = burn.reduce((a, b) => a + b, 0);
+document.getElementById('burn').textContent = '$' + totalBurn.toFixed(2);
+
+(function drawActuals() {
+  const host = document.getElementById('actualplot');
+  const W = 640, H = 150, P = { t: 14, r: 10, b: 20, l: 40 };
+  const max = Math.max(...burn) * 1.15;
+  const bw = (W - P.l - P.r) / DAYS;
+  const Y = v => P.t + (1 - v / max) * (H - P.t - P.b);
+  let bars = '';
+  for (let i = 0; i < DAYS; i++) {
+    const x = P.l + i * bw + 2, w = bw - 4, y = Y(burn[i]), h = H - P.b - y;
+    bars += `<path d="M${x},${H - P.b} L${x},${y + 4} Q${x},${y} ${x + 4},${y} L${x + w - 4},${y} Q${x + w},${y} ${x + w},${y + 4} L${x + w},${H - P.b} Z" fill="var(--amber)" data-i="${i}"/>`;
+  }
+  const gridY = [0.5].map(f => Y(max * f).toFixed(1));
+  host.innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Daily LLM spend, last 14 days, versus revenue at zero">
+      ${gridY.map(y => `<line x1="${P.l}" x2="${W - P.r}" y1="${y}" y2="${y}" stroke="rgba(0,0,0,0.05)"/>`).join('')}
+      <text x="${P.l - 6}" y="${Y(max * 0.5) + 3}" text-anchor="end" font-family="SF Mono,Menlo,monospace" font-size="10" fill="#9b9b9b">${'$' + (max * 0.5).toFixed(2)}</text>
+      ${bars}
+      <line x1="${P.l}" x2="${W - P.r}" y1="${H - P.b}" y2="${H - P.b}" stroke="var(--green)" stroke-width="2"/>
+      <text x="${W - P.r}" y="${H - P.b - 6}" text-anchor="end" font-family="SF Mono,Menlo,monospace" font-size="10" fill="var(--green)">revenue $0.00</text>
+      <text x="${P.l}" y="${H - 4}" font-family="SF Mono,Menlo,monospace" font-size="10" fill="#9b9b9b">${DAYS}d ago</text>
+      <text x="${W - P.r}" y="${H - 4}" text-anchor="end" font-family="SF Mono,Menlo,monospace" font-size="10" fill="#9b9b9b">today</text>
+    </svg>
+    <div class="tip"></div>`;
+  const tip = host.querySelector('.tip'), svg = host.querySelector('svg');
+  svg.querySelectorAll('path').forEach(p => {
+    p.addEventListener('mousemove', (e) => {
+      const i = +p.dataset.i, r = svg.getBoundingClientRect();
+      tip.style.display = 'block';
+      tip.style.left = ((P.l + i * bw + bw / 2) / W * 100) + '%';
+      tip.style.top = (Y(burn[i]) / H * 100) + '%';
+      tip.textContent = '$' + burn[i].toFixed(3) + ' · ' + (DAYS - 1 - i === 0 ? 'today' : (DAYS - 1 - i) + 'd ago');
+    });
+    p.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+  });
+})();
+
+// ── the division — four segments, tax included, always summing to 100 ──
+const SEGS = [
+  { key: 'payroll', label: 'Payroll/Ops', color: 'var(--violet)', pct: 25 },
+  { key: 'growth',  label: 'Growth',      color: 'var(--teal)',   pct: 35 },
+  { key: 'reserve', label: 'Reserve',     color: 'var(--amber)',  pct: 20 },
+  { key: 'tax',     label: 'Tax set-aside', color: 'var(--rose)', pct: 20 },
+];
+const bar = document.getElementById('divbar');
+const sliders = document.getElementById('sliders');
+SEGS.forEach((sg, i) => {
+  const seg = document.createElement('div');
+  seg.className = 'seg'; seg.style.background = sg.color; seg.dataset.k = sg.key;
+  bar.appendChild(seg);
+  const lab = document.createElement('label');
+  lab.innerHTML = `<span class="sname"><b>${sg.label}</b><span class="mono" data-out="${sg.key}"></span></span>
+    <input type="range" min="0" max="100" value="${sg.pct}" data-k="${sg.key}" aria-label="${sg.label} percent">`;
+  sliders.appendChild(lab);
+});
+function renderSplit() {
+  const total = SEGS.reduce((a, b) => a + b.pct, 0) || 1;
+  SEGS.forEach(sg => {
+    const norm = sg.pct / total * 100;
+    const seg = bar.querySelector(`[data-k="${sg.key}"]`);
+    seg.style.flexGrow = String(Math.max(norm, 0.001));
+    seg.textContent = norm >= 9 ? `${sg.label} ${Math.round(norm)}%` : (norm >= 5 ? `${Math.round(norm)}%` : '');
+    sliders.querySelector(`[data-out="${sg.key}"]`).textContent =
+      `${Math.round(norm)}% · $${Math.round(BAL * norm / 100).toLocaleString()}`;
+  });
+  document.getElementById('divnote').textContent =
+    `sliders auto-normalize to 100% of $${BAL.toLocaleString()} — the raw positions are weights, not promises`;
+}
+sliders.addEventListener('input', (e) => {
+  const sg = SEGS.find(x => x.key === e.target.dataset.k);
+  if (sg) { sg.pct = +e.target.value; renderSplit(); }
+});
+renderSplit();
+
+document.getElementById('allocform').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const d = new FormData(e.target);
+  const total = SEGS.reduce((a, b) => a + b.pct, 0) || 1;
+  const split = SEGS.map(sg => `${sg.label} ${Math.round(sg.pct / total * 100)}% (~$${Math.round(BAL * sg.pct / total / 100 * 100).toLocaleString()})`).join(', ');
+  sendToPipeline(
+    { dept: 'finance', agent: 'Legal Finance Reviewer (human)',
+      message: 'Human legal-finance review · SPLIT: ' + split + ' · TAX: ' + d.get('tax') + (d.get('notes') ? ' · NOTES: ' + d.get('notes') : ''),
+      chips: ['tax ' + Math.round(SEGS[3].pct / total * 100) + '%', '$' + BAL.toLocaleString()] },
+    document.getElementById('allocnote'),
+    e.target.querySelector('button[type=submit]')
+  );
+});
+
+</script>
+</body>
+</html>

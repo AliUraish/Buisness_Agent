@@ -536,7 +536,7 @@ a.terac-job:hover { color: var(--ink); }
   border-bottom: 1px solid var(--border);
 }
 .ship-banner.open { max-height: 56px; }
-.gh-banner.open { max-height: 96px; }
+.gh-banner.open { max-height: 148px; }
 .ship-inner {
   display: flex;
   align-items: center;
@@ -615,6 +615,13 @@ a.terac-job:hover { color: var(--ink); }
 
 .gh-banner .ship-inner { gap: 10px; flex-wrap: wrap; }
 .gh-banner .testmode { margin-right: 2px; }
+.gh-banner .start-pill { margin-left: auto; }
+.gh-perm-hint {
+  padding: 0 20px 10px;
+  font-size: 11px;
+  color: var(--ink-3);
+  line-height: 1.4;
+}
 .gh-repo {
   font: inherit;
   font-size: 12px;
@@ -1429,6 +1436,7 @@ a.terac-job:hover { color: var(--ink); }
 .bug-verdict { font-size: 11.5px; line-height: 1.45; }
 .bug-verdict .dim { color: var(--ink-3); }
 .v-confirmed { color: var(--violet); font-weight: 500; text-transform: uppercase; font-size: 10px; letter-spacing: 0.05em; margin-right: 4px; }
+.v-reviewing { color: var(--teal); font-weight: 500; text-transform: uppercase; font-size: 10px; letter-spacing: 0.05em; margin-right: 4px; }
 .v-notrepro { color: var(--ink-3); font-weight: 500; text-transform: uppercase; font-size: 10px; letter-spacing: 0.05em; margin-right: 4px; }
 .bug-finding { color: var(--ink-2); }
 
@@ -1533,9 +1541,19 @@ a.terac-job:hover { color: var(--ink); }
   min-height: 18px;
 }
 .bank-review .testmode.live { border-color: var(--teal); color: var(--teal); }
+.bank-legal {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
 
 /* funding meter: Perflo pool with Stripe overflow */
 .funding { margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 5px; }
 .funding-row { display: flex; align-items: center; gap: 8px; font-size: 11px; }
 .funding-label { color: var(--ink-2); flex: none; }
 .funding-row b { font-weight: 500; }
+
+/* real-chart annotation */
+.chart-tag { position: absolute; bottom: 8px; right: 14px; font-size: 10px; color: var(--ink-3); }

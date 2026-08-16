@@ -5,19 +5,23 @@
 
 import { AUDIENCE } from '../data/audience'
 import { mulberry32 } from './rng'
-import { fetchBars, fetchLatestPrices, submitPaperOrder, ORDERS_ENABLED } from './alpaca'
-import { hireAllocationReview, hireClaimReview, hireShipReview, hireTradeReview, pollAllocationReview, pollClaimReview, pollShipReview, pollTradeReview } from './terac'
+import { fetchBars, fetchLatestPrices, fetchPaperAccount, submitPaperOrder, submitPaperSell, shouldHarvest, ORDERS_ENABLED } from './alpaca'
+import { blankTeracMcp, hireAllocationReview, hireClaimReview, hireLegalReview, hireShipReview, hireTradeReview, pollAllocationReview, pollClaimReview, pollLegalReview, pollShipReview, pollTradeReview, refreshTeracStatus, type TeracMcpStatus } from './terac'
 import { refreshLinqStatus, sendLinqMessage, sendLinqOnboard } from './linq'
 import { fetchPaySummary, fetchStripeToday, TodayRevenue } from './pay'
-import { extractJson, fetchLlmStatus, llmComplete, LlmProvider, LlmStatus } from './llm'
+import { extractJson, fetchLlmStatus, llmComplete, rechargeLlmCredits, LlmProvider, LlmStatus } from './llm'
+import { blankCredits, CREDIT_PACK, CREDIT_PACK_USD, shouldBuyCredits, type CreditBook } from './credits'
 import { fetchDbStatus, journalEvent, loadJournal, loadState, putState } from './persist'
 import { fetchPerfloSummary } from './perflo'
 import { fetchResearchStatus, runResearch } from './research'
-import { blankGithubScan, fetchGithubScan, shipGithubFeature, type GithubScan, type MarketingNeed } from './github'
+import { blankGithubScan, fetchGithubScan, mergeGithubPr, shipGithubFeature, type GithubScan, type MarketingNeed } from './github'
 
 export type { GithubScan, GithubCommit, GithubPr, MarketingNeed } from './github'
 
 export type Dept = 'product' | 'marketing' | 'finance' | 'ceo' | 'alerts'
+
+export const COMPANY_NAME = 'Bob the Busines'
+export const PRODUCT_REPO = 'AliUraish/Buisness_Agent'
 
 export const DEPT_COLOR: Record<Dept, string> = {
   product: '#7c6ff0',
@@ -132,7 +136,7 @@ export interface IntelMove {
   sources?: string[] // real citation domains when Perplexity researched it
 }
 
-// ── Ship pipeline: research → Repo Agent revises the python SDK → merge ──
+// ── Ship pipeline: research → Repo Agent revises the product repo → merge ──
 export type ShipStage =
   | 'researching'
   | 'briefed'
@@ -192,6 +196,13 @@ export interface ShipJob {
   featureId: string | null
 }
 
+export function teracVerifyLabel(job: Pick<ShipJob, 'gate' | 'pr'>): 'verified' | 'not-verified' | 'reviewing' | null {
+  if (job.gate.verdict === 'approved') return 'verified'
+  if (job.gate.status === 'hiring' || job.gate.status === 'waiting') return 'reviewing'
+  if (job.gate.verdict === 'rejected' || job.pr) return 'not-verified'
+  return null
+}
+
 // ── Investment (mode 7) ────────────────────────────────────────
 export interface Vote {
   agent: string
@@ -244,7 +255,7 @@ export interface AssetPred {
 // trade before the money moves — mirrors the audience claim-review gate.
 // 'expert' = a Terac expert answered; 'desk' = honest fallback confidence
 // derived from agent agreement (Terac off / not answered yet).
-export type TradeGateStatus = 'idle' | 'hiring' | 'waiting' | 'expert' | 'desk'
+export type TradeGateStatus = 'idle' | 'hiring' | 'waiting' | 'expert' | 'desk' | 'error'
 
 export interface TradeGate {
   status: TradeGateStatus
@@ -277,6 +288,19 @@ export interface PositionRec {
   qty: number
   cost: number // USD in at entry
   entry: number // entry price
+  orderId?: string | null
+}
+
+export function deskPnl(
+  positions: Pick<PositionRec, 'qty' | 'cost' | 'assetId'>[],
+  assets: Pick<Asset, 'id' | 'price'>[],
+  realized: number,
+): number {
+  const open = positions.reduce((sum, p) => {
+    const a = assets.find((x) => x.id === p.assetId)
+    return sum + (a ? p.qty * a.price - p.cost : 0)
+  }, 0)
+  return realized + open
 }
 
 // ── Support (mode 8) — customer service over Linq messaging ────
@@ -471,17 +495,23 @@ export interface EngineState {
   positions: PositionRec[]
   marketFeed: 'connecting' | 'live' | 'sim'
   ordersLive: boolean
+  tradingRevenue: number
+  unrealizedPnl: number
+  paperEquity: number | null
   tickets: Ticket[]
   linqLive: boolean
   paymentLink: string | null
   bugChecks: BugCheck[]
   github: GithubScan
+  teracMcp: TeracMcpStatus
   marketingQueue: MarketingNeed[]
   marketingPick: string | null
   bank: Bank
+  legalFinance: TeracJob
   funding: Funding
   railsLive: { stripe: RailLive; whop: RailLive }
   llm: LlmStatus | null
+  credits: CreditBook
   dbLive: boolean
   stripeToday: TodayRevenue | null
 }
@@ -542,6 +572,7 @@ export const AGENT_DEPT: Record<string, Dept> = {
   'Support QA': 'marketing',
   'Bug Checker': 'product',
   'CFO Agent': 'finance',
+  'Credit Buyer': 'finance',
   'Terac Liaison': 'alerts',
   Direct: 'marketing',
   Receipts: 'marketing',
@@ -777,54 +808,41 @@ const RESEARCHERS: { agent: string; mono: string }[] = [
 
 export const SDK_SHIPS: { id: string; name: string; summary: string; file: string; rival: string; brief: string }[] = [
   {
-    id: 'openai-tool-spans',
-    name: 'OpenAI tool_use spans',
-    summary: 'Copy tool_use names and counts onto the OpenAI request span',
-    file: 'agentbasis/llms/openai/tool_spans.py',
-    rival: 'OpenLLMetry',
-    brief: 'OpenLLMetry records OpenAI tool_use names. agentbasis-python-sdk did not — Gap Analyst flagged it.',
+    id: 'terac-ship-form',
+    name: 'Terac ship form',
+    summary: 'Humans in the loop see the PR and answer: should we ship, is the code ready',
+    file: 'product/terac-ship-form.md',
+    rival: 'Terac',
+    brief: 'Terac sells human review. Bob the Busines already hires them — this notes the ship form on /review for AliUraish/Buisness_Agent.',
   },
   {
-    id: 'anthropic-stream-retry',
-    name: 'Anthropic stream retry spans',
-    summary: 'Retry/backoff spans when Messages.stream() drops mid-generator',
-    file: 'agentbasis/llms/anthropic/stream_retry.py',
-    rival: 'LangSmith',
-    brief: 'LangSmith traces stream retries. Our Anthropic wrap ended the span on the first drop.',
+    id: 'github-product-scan',
+    name: 'GitHub product scan',
+    summary: 'Repo Agent scans AliUraish/Buisness_Agent and queues committed features to marketing',
+    file: 'product/github-product-scan.md',
+    rival: 'Cognition',
+    brief: 'Devin-class agents ship in the repo. Bob the Busines scans this cockpit repo and opens PRs under product/.',
   },
   {
-    id: 'gemini-token-metrics',
-    name: 'Gemini token metrics',
-    summary: 'Prompt/completion token counts as span attributes on async Gemini calls',
-    file: 'agentbasis/llms/gemini/token_metrics.py',
-    rival: 'OpenLLMetry',
-    brief: 'Gemini async calls were missing token metrics. Changelog Scout saw OpenLLMetry shipping them last week.',
+    id: 'linq-onboard',
+    name: 'Linq onboard text',
+    summary: 'Support Writer texts the Stripe subscribe link after a customer texts in',
+    file: 'product/linq-onboard.md',
+    rival: 'Lindy',
+    brief: 'Lindy automates customer messaging. Bob the Busines already texts onboarders via Linq — this is the product note.',
   },
   {
-    id: 'payload-redaction',
-    name: 'payload redaction',
-    summary: 'Redact prompts and completions before they hit the exporter',
-    file: 'agentbasis/context_redaction.py',
-    rival: 'LangSmith',
-    brief: 'LangSmith redacts PII in traces by default. We were exporting raw prompts.',
-  },
-  {
-    id: 'langchain-span-events',
-    name: 'LangChain span events',
-    summary: 'Emit span events for LangChain tool and chain starts',
-    file: 'agentbasis/frameworks/langchain/span_events.py',
-    rival: 'LangSmith',
-    brief: 'LangChain users compare us to LangSmith. We had traces, not tool/chain events.',
-  },
-  {
-    id: 'stream-cancel-events',
-    name: 'stream cancel events',
-    summary: 'Record an exception event when a stream is cancelled by the caller',
-    file: 'agentbasis/llms/anthropic/cancel_events.py',
-    rival: 'OpenLLMetry',
-    brief: 'Cancelled Anthropic streams left orphan spans. Research: record the cancel as an event and close the span.',
+    id: 'rival-watch',
+    name: 'rival watch',
+    summary: 'Changelog Scout / Gap Analyst / Brief Writer research rivals and forward a ship brief',
+    file: 'product/rival-watch.md',
+    rival: 'Terac',
+    brief: 'Human-in-the-loop shops watch the market slowly. Bob the Busines intel desk already sweeps rivals and hands a brief to Repo Agent.',
   },
 ]
+
+export const SHIP_TERAC_ARMED = true
+export const MAX_SDK_SHIPS = 4
 
 function blankShipGate(): ShipGate {
   return {
@@ -838,10 +856,6 @@ function blankShipGate(): ShipGate {
     reason: null,
   }
 }
-
-// Never hire Terac on the SDK ship loop (backend/Agent.md). Research → GitHub merge.
-export const SHIP_TERAC_ARMED = false
-export const MAX_SDK_SHIPS = 6
 
 const POST_TEMPLATES = [
   (f: string) => `${f} is live. Shipped, merged, and in your account right now — not on a roadmap. →`,
@@ -1023,56 +1037,55 @@ const SUPPORT_ISSUES: { topic: TicketTopic; priority: 'P1' | 'P2' | 'P3'; text: 
   {
     topic: 'bug',
     priority: 'P1',
-    text: 'Anthropic Messages.stream() spans never close — traces pile up in our collector after a few minutes.',
-    reply: 'Reproduced on agentbasis-python-sdk main — _WrappedStreamManager dropped the end span on generator exit. I patched the wrap and your missed spans should stop landing. Restart the instrumented process to pick it up.',
-    followup: 'Collector is clean now. Thanks.',
+    text: 'The latest ship never showed up in the cockpit after merge.',
+    reply: 'Reproduced on main — the scan cache held the previous commit. I forced a rescan; your feature should be in Product now.',
+    followup: 'Seeing it in Product. Thanks.',
   },
   {
     topic: 'bug',
     priority: 'P2',
-    text: 'Gemini instrumentation misses tool_use names on async calls — we only see the parent span.',
-    reply: 'Confirmed — async Gemini tool_use attributes were never copied onto the child span. That’s the gap PR #1/#2 were closing. Upgrade to the latest sdk; tool names should show on async calls.',
-    followup: 'Seeing tool names on the async path now.',
+    text: 'Support Writer queued a text but I never got the iMessage.',
+    reply: 'Linq only delivers after you text the org number first. Send any message to that number, then we can reply.',
+    followup: 'That was it — got the follow-up.',
   },
   {
     topic: 'billing',
     priority: 'P2',
-    text: 'Did the Python SDK start double-counting token usage? Our Gemini bill jumped after we upgraded.',
-    reply: 'The tracer was attributing both the stream chunk and the final message. I flagged your project so usage is counted once; the extra Gemini tokens from last week are noted on the invoice as a credit.',
-    followup: 'Credit showed up. Appreciate it.',
+    text: 'Stripe charged me twice for the same month.',
+    reply: 'The second charge was a test-mode duplicate. I flagged it; you should see a reversal on the test dashboard.',
+    followup: 'Reversal showed up. Appreciate it.',
   },
   {
     topic: 'how-to',
     priority: 'P3',
-    text: 'How do I wrap AsyncMessages.stream so OpenTelemetry gets tool count attributes?',
-    reply: 'Use the instrumented AsyncMessages from agentbasis — don’t wrap stream() yourself. Tool count and tool_use names are added on the request span automatically after PR #4. Call `instrument()` once at process start.',
-    followup: 'That was the missing piece, thanks!',
+    text: 'How do I point the agents at my own GitHub repo?',
+    reply: 'Set GITHUB_REPO=owner/name in .env and restart the backend. Product scans that repo only.',
+    followup: 'Scan is on our repo now, thanks!',
   },
   {
     topic: 'feature',
     priority: 'P3',
-    text: 'Any plans to instrument tool_use names on Anthropic the way you did for Gemini?',
-    reply: 'Shipped — Anthropic tool improvement merged as PR #4. Upgrade agentbasis-python-sdk and the request spans carry tool count + tool use names.',
-    followup: 'We’ll bump the pin this afternoon.',
+    text: 'Can the ship loop open a PR and wait for a human yes/no before merge?',
+    reply: 'That’s the Terac ship form — humans get Should we ship this? and is the code ready? before merge.',
+    followup: 'We’ll use that on the next change.',
   },
   {
     topic: 'churn-risk',
     priority: 'P1',
-    text: 'Honestly considering dropping the SDK and wiring OpenTelemetry ourselves — Gemini traces have been incomplete for weeks.',
-    reply: '', // churn risk is never auto-answered — routed to the human queue
+    text: 'Honestly considering dropping this — the agents keep shipping to the wrong product.',
+    reply: '',
     followup: '',
   },
 ]
 
-// what the engineer agent finds per bug (keyed by the customer's report)
 const BUG_FINDINGS: Record<string, { finding: string; chips: string[] }> = {
-  'Anthropic Messages.stream() spans never close — traces pile up in our collector after a few minutes.': {
-    finding: '_WrappedStreamManager does not emit the end span when the generator exits. Reproduced on main.',
-    chips: ['_WrappedStreamManager', 'PR #4'],
+  'The latest ship never showed up in the cockpit after merge.': {
+    finding: 'GitHub scan cache did not invalidate after merge. Reproduced on main.',
+    chips: ['scan cache', 'Product'],
   },
-  'Gemini instrumentation misses tool_use names on async calls — we only see the parent span.': {
-    finding: 'Async Gemini path never copies tool_use names onto the child span. Reproduced on main.',
-    chips: ['gemini instrumentation', 'PR #1'],
+  'Support Writer queued a text but I never got the iMessage.': {
+    finding: 'Linq inbound handshake missing — recipient had not texted the org number.',
+    chips: ['Linq', 'onboard'],
   },
 }
 
@@ -1190,7 +1203,7 @@ class Engine {
     forecasters: [],
     forecastAt: 0,
     forecastNote: { text: '', scheduled: null, at: 0 },
-    railTotals: LIVE_ONLY ? { Stripe: 0, Whop: 0 } : { Stripe: 2455, Whop: 1386 },
+    railTotals: LIVE_ONLY ? { Stripe: 0, Whop: 0, Alpaca: 0 } : { Stripe: 2455, Whop: 1386, Alpaca: 0 },
     repo: LIVE_ONLY
       ? { commits: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], openPRs: 0, lastScanAt: Date.now() }
       : { commits: [3, 5, 2, 6, 4, 8, 5, 7, 4, 6, 9, 5, 7, 6], openPRs: 4, lastScanAt: Date.now() },
@@ -1199,19 +1212,18 @@ class Engine {
     llmCalls: LIVE_ONLY ? [] : SEED.llmCalls,
     posts: LIVE_ONLY ? [] : SEED.posts,
     competitors: [
-      { id: 'langsmith', name: 'LangSmith', status: 'watching', threat: 0.62, lastScanAt: 0, capIds: ['tracing', 'evals', 'prompt-management', 'datasets', 'dashboards'] },
-      { id: 'langfuse', name: 'Langfuse', status: 'watching', threat: 0.48, lastScanAt: 0, capIds: ['tracing', 'evals', 'prompt-management', 'cost-tracking', 'dashboards', 'otel'] },
-      { id: 'helicone', name: 'Helicone', status: 'watching', threat: 0.31, lastScanAt: 0, capIds: ['tracing', 'cost-tracking', 'dashboards'] },
+      { id: 'terac', name: 'Terac', status: 'watching', threat: 0.58, lastScanAt: 0, capIds: ['human-in-loop', 'support-desk'] },
+      { id: 'cognition', name: 'Cognition', status: 'watching', threat: 0.51, lastScanAt: 0, capIds: ['github-ship', 'cockpit'] },
+      { id: 'lindy', name: 'Lindy', status: 'watching', threat: 0.36, lastScanAt: 0, capIds: ['voice-agents', 'marketing-studio', 'support-desk'] },
     ],
     capabilities: [
-      { id: 'tracing', label: 'agent tracing', ours: false },
-      { id: 'otel', label: 'OpenTelemetry', ours: false },
-      { id: 'evals', label: 'evals', ours: false },
-      { id: 'prompt-management', label: 'prompt management', ours: false },
-      { id: 'cost-tracking', label: 'cost tracking', ours: false },
-      { id: 'dashboards', label: 'dashboards', ours: false },
-      { id: 'datasets', label: 'datasets', ours: false },
-      { id: 'session-replay', label: 'session replay', ours: false },
+      { id: 'cockpit', label: 'ops cockpit', ours: false },
+      { id: 'github-ship', label: 'GitHub ship loop', ours: false },
+      { id: 'human-in-loop', label: 'human-in-the-loop', ours: false },
+      { id: 'support-desk', label: 'support desk', ours: false },
+      { id: 'treasury', label: 'treasury', ours: false },
+      { id: 'marketing-studio', label: 'marketing studio', ours: false },
+      { id: 'voice-agents', label: 'voice agents', ours: false },
     ],
     intel: LIVE_ONLY
       ? []
@@ -1266,6 +1278,9 @@ class Engine {
     positions: LIVE_ONLY ? [] : MARKET.positions,
     marketFeed: 'connecting',
     ordersLive: ORDERS_ENABLED,
+    tradingRevenue: 0,
+    unrealizedPnl: 0,
+    paperEquity: null,
     tickets: LIVE_ONLY ? [] : seedSupport(),
     linqLive: false,
     paymentLink: null,
@@ -1295,10 +1310,13 @@ class Engine {
     },
     stripeToday: null,
     llm: null,
+    credits: blankCredits(),
     dbLive: false,
     github: blankGithubScan(),
+    teracMcp: blankTeracMcp(),
     marketingQueue: [],
     marketingPick: null,
+    legalFinance: blankTerac(),
   }
 
   private listeners = new Set<Listener>()
@@ -1318,6 +1336,7 @@ class Engine {
   private lastExpertReading: { confidence: number; expert: string | null; note: string; at: number } | null = null
   private pendingPublish: { feature: string; camp: number; winner: DraftPost; tally: number } | null = null
   private shipBusy = false
+  private deskBusy = false
   private teracShipBlocked = false
 
   subscribe = (fn: Listener): (() => void) => {
@@ -1497,6 +1516,7 @@ class Engine {
       st8.loops = Number(k.counters.loops) || st8.loops
       st8.campaigns = Number(k.counters.campaigns) || st8.campaigns
       st8.sessionCampaigns = Array.isArray(k.counters.sessionCampaigns) ? k.counters.sessionCampaigns : []
+      if (Number.isFinite(k.counters.tradingRevenue)) st8.tradingRevenue = Number(k.counters.tradingRevenue)
     }
     // restored records carry old ids — keep new ids clear of them
     const maxId = Math.max(
@@ -1526,7 +1546,7 @@ class Engine {
     putState('posts', s.posts)
     putState('bugChecks', s.bugChecks)
     putState('capabilities', s.capabilities)
-    putState('counters', { loops: s.loops, campaigns: s.campaigns, sessionCampaigns: s.sessionCampaigns })
+    putState('counters', { loops: s.loops, campaigns: s.campaigns, sessionCampaigns: s.sessionCampaigns, tradingRevenue: s.tradingRevenue })
   }
 
   start() {
@@ -1554,10 +1574,8 @@ class Engine {
       this.state.spark[this.state.spark.length - 1] = this.state.mrr
     }
 
-    // the finance page keeps its original look: forecast ensemble + report
-    // run in every mode (the modelled view), anchored at the model MRR
-    this.runForecast()
-    {
+    if (!LIVE_ONLY) {
+      this.runForecast()
       const p50 = this.forecastP50()
       this.state.forecastNote = { text: this.reportText(p50), scheduled: null, at: Date.now() }
     }
@@ -1598,7 +1616,9 @@ class Engine {
               if (a.history.length > 120) a.history.shift()
               a.changePct = (a.price / a.history[0] - 1) * 100
             }
+            this.applyRevenue()
             this.emit()
+            void this.harvestPositions()
           })
           .catch(() => {
             pollFails++
@@ -1618,7 +1638,9 @@ class Engine {
           if (a.history.length > 120) a.history.shift()
           a.changePct = (a.price / a.history[0] - 1) * 100
         }
+        this.applyRevenue()
         this.emit()
+        void this.harvestPositions()
       }
     }, 2500)
     this.timers.push(ticker as unknown as ReturnType<typeof setTimeout>)
@@ -1627,8 +1649,9 @@ class Engine {
     if (!LIVE_ONLY) {
       this.runLoop()
       this.runCompetitionLoop()
-      this.runInvestmentLoop()
     }
+    this.runInvestmentLoop()
+    this.runCreditLoop()
 
     // agent brains: if any LLM provider is configured, the desk and CFO run
     // for real — actual model calls, actual ledger rows
@@ -1638,17 +1661,18 @@ class Engine {
         const on = [st.anthropic && 'Anthropic', st.openai && 'OpenAI', st.gemini && 'Gemini'].filter(Boolean).join(' · ')
         this.log('ceo', 'Orchestrator', `Agent brains online — ${on} · session cap ${st.callsMax} calls`, ['real LLM'])
         if (LIVE_ONLY) {
-          this.runInvestmentLoop()
           this.runBankLoop()
           void this.planAllocation()
+          void this.runRealForecast()
         }
       } else if (LIVE_ONLY) {
-        this.log('ceo', 'Orchestrator', 'No LLM keys configured — agent reasoning paused', ['llm off'])
+        this.log('ceo', 'Orchestrator', 'No LLM keys configured — desk still paper-trades on the formula book', ['llm off'])
       }
       this.emit()
     })
     this.runGithubLoop()
     this.runProductShipLoop()
+    void this.refreshTeracMcp()
 
     // support: check Linq once (our own backend, free). Onboard send is
     // Support-mode "Text subscribe link" — recipient must text the org first.
@@ -1678,6 +1702,63 @@ class Engine {
     this.timers.push(todayPoll as unknown as ReturnType<typeof setTimeout>)
   }
 
+  // ── Real forecast ensemble: five persona seats on three real models ──
+  private async runRealForecast() {
+    const seats: { model: string; mono: string; persona: string; provider: LlmProvider }[] = [
+      { model: 'GPT-5', mono: 'G', persona: 'Bull', provider: 'openai' },
+      { model: 'Gemini', mono: 'Ge', persona: 'Bear', provider: 'gemini' },
+      { model: 'Claude', mono: 'C', persona: 'Churn-hawk', provider: 'anthropic' },
+      { model: 'Claude', mono: 'C', persona: 'Base-rate', provider: 'anthropic' },
+      { model: 'GPT-5', mono: 'G', persona: 'Momentum', provider: 'openai' },
+    ]
+    const rev = this.state.stripeToday
+    const facts =
+      `Company: Business_Agent, an autonomous AI company selling the AgentBasis python SDK (AI agent observability). ` +
+      `Launched today. Real Stripe revenue today: $${((rev?.grossCents ?? 0) / 100).toFixed(2)} across ${rev?.count ?? 0} payments (${rev?.mode ?? 'off'} mode). ` +
+      `LLM operating cost today: $${this.state.spendToday.toFixed(2)}. Marketing posts + GitHub shipping are live.`
+    const results: Forecaster[] = []
+    for (const seat of seats) {
+      const text = await this.agentBrain(
+        `Forecaster · ${seat.model} ${seat.persona}`,
+        seat.provider,
+        `You are the ${seat.persona} seat on a revenue forecasting ensemble. Given real company facts, predict total revenue (USD) for the NEXT 30 DAYS. Reply with ONLY JSON: {"p50": <integer dollars>, "confidence": <0.1-0.95>, "rationale": "<one short sentence>"}`,
+        facts,
+        110,
+      )
+      const parsed = text ? extractJson(text) : null
+      const p50 = parsed ? Math.round(Number(parsed.p50)) : NaN
+      if (Number.isFinite(p50) && p50 >= 0 && p50 < 10_000_000) {
+        results.push({
+          model: seat.model,
+          mono: seat.mono,
+          persona: seat.persona,
+          p50,
+          confidence: Math.min(Math.max(Number(parsed.confidence) || 0.5, 0.1), 0.95),
+          rationale: String(parsed.rationale ?? '').slice(0, 120),
+        })
+        this.state.forecasters = [...results]
+        this.emit()
+      }
+    }
+    if (results.length >= 3) {
+      const p50 = this.forecastP50()
+      const lo = Math.min(...results.map((f) => f.p50))
+      const hi = Math.max(...results.map((f) => f.p50))
+      this.state.forecastNote = {
+        text:
+          `The ensemble of ${results.length} real models projects $${p50.toLocaleString()} revenue over the next 30 days, ` +
+          `with estimates spanning $${lo.toLocaleString()}–$${hi.toLocaleString()}. ` +
+          `Grounded in real numbers: $${((rev?.grossCents ?? 0) / 100).toFixed(2)} revenue today, ` +
+          `$${this.state.spendToday.toFixed(2)} operating cost, live GitHub shipping and campaigns. ` +
+          `Every prediction and rationale above came from an actual model call.`,
+        scheduled: null,
+        at: Date.now(),
+      }
+      this.log('finance', 'Forecast Ensemble', `Real 30d forecast: $${p50.toLocaleString()} (${results.length} models, $${lo.toLocaleString()}–$${hi.toLocaleString()})`, ['real LLM'])
+    }
+    this.emit()
+  }
+
   // ── Competition research: real Perplexity sweeps on real rivals ──
   private async runResearchLoop() {
     const st = await fetchResearchStatus()
@@ -1685,7 +1766,7 @@ class Engine {
       this.log('alerts', 'Changelog Scout', 'Perplexity off — competitive research paused', ['no key'])
       return
     }
-    this.log('alerts', 'Changelog Scout', 'Perplexity research online — sweeping rivals in AI agent observability', ['sonar', 'live'])
+    this.log('alerts', 'Changelog Scout', 'Perplexity research online — sweeping rivals', ['sonar', 'live'])
     await this.sleep(20000)
     for (const rival of this.state.competitors) {
       try {
@@ -1701,8 +1782,8 @@ class Engine {
     rival.status = 'scanning'
     this.emit()
     const r = await runResearch(
-      `What has ${rival.name} shipped or announced recently for AI agent / LLM observability (tracing, evals, prompt management, cost tracking, OpenTelemetry)? Newest features and pricing changes only. 3 bullet points max.`,
-      `You research competitors of AgentBasis, an AI agent observability platform. Be concrete, recent, and cite sources.`,
+      `What has ${rival.name} shipped or announced recently against our product? Newest features and pricing changes only. 3 bullet points max.`,
+      `You research competitors of ${COMPANY_NAME}, a zero-human company that runs itself from a cockpit (repo ${PRODUCT_REPO}). Be concrete, recent, and cite sources.`,
     )
     rival.lastScanAt = Date.now()
     if (!r || !r.live || r.error || !r.text.trim()) {
@@ -1734,7 +1815,7 @@ class Engine {
     const counter = await this.agentBrain(
       'Gap Analyst',
       'anthropic',
-      'You are the Gap Analyst at AgentBasis, an AI agent observability platform (python SDK). Given rival research, reply with ONE short sentence: the most important counter-move for AgentBasis. No preamble.',
+      'You are the Gap Analyst at Bob the Busines. Given rival research, reply with ONE short sentence: the most important counter-move for our cockpit product. No preamble.',
       `Rival: ${rival.name}. Research findings: ${r.text.slice(0, 900)}`,
       80,
     )
@@ -1804,7 +1885,7 @@ class Engine {
     if (!today) return
     const prev = this.state.stripeToday
     this.state.stripeToday = today
-    if (LIVE_ONLY && today.live) this.state.mrr = Math.round(today.grossCents / 100)
+    if (LIVE_ONLY && today.live) this.applyRevenue()
     if (today.live && !prev?.live) {
       this.log(
         'finance',
@@ -1876,7 +1957,7 @@ class Engine {
     const text = await this.agentBrain(
       'CFO Agent',
       'anthropic',
-      `You are the CFO Agent of Business_Agent, an autonomous software company. Divide the ENTIRE operating account at ${bank.name} (balance $${bank.balance.toLocaleString()}) across sensible business categories. Reply with ONLY compact JSON, no markdown: {"alloc": [{"label": "<category>", "pct": <integer>}...], "rationale": "<ONE short sentence>"} — 5 to 7 categories, short labels, integer percents summing to exactly 100, covering at least payroll/ops, taxes, marketing, investment, and a cash buffer.`,
+      `You are the CFO Agent of ${COMPANY_NAME}, an autonomous software company. Divide the ENTIRE operating account at ${bank.name} (balance $${bank.balance.toLocaleString()}) across sensible business categories. Reply with ONLY compact JSON, no markdown: {"alloc": [{"label": "<category>", "pct": <integer>}...], "rationale": "<ONE short sentence>"} — 5 to 7 categories, short labels, integer percents summing to exactly 100, covering at least payroll/ops, taxes, marketing, investment, and a cash buffer.`,
       `Company facts: revenue today $${((rev?.grossCents ?? 0) / 100).toFixed(2)} (Stripe ${rev?.mode ?? 'off'}), LLM spend today $${this.state.spendToday.toFixed(2)}, team is entirely AI agents (no salaries yet, but keep a payroll/ops line for contractors and Terac hires). Divide the account as JSON only.`,
       350,
       'smart',
@@ -1901,7 +1982,7 @@ class Engine {
       this.log('finance', 'CFO Agent', 'Division proposal failed to parse — keeping the baseline split', ['fallback'])
     }
     this.emit()
-    await this.reviewAllocation()
+    // Terac legal-finance review is a Finance-mode button, not automatic.
   }
 
   private async reviewAllocation() {
@@ -1995,6 +2076,70 @@ class Engine {
     else f.stripeSpent += amount
   }
 
+  private creditBusy = false
+
+  private spendCredit(agent: string, n = 1) {
+    this.state.credits.balance = Math.max(0, this.state.credits.balance - n)
+    if (shouldBuyCredits(this.state.credits)) void this.buyCredits(agent)
+    this.emit()
+  }
+
+  private async buyCredits(askedBy: string) {
+    if (this.creditBusy || !shouldBuyCredits(this.state.credits)) return
+    this.creditBusy = true
+    try {
+      const growth = this.state.treasury.alloc.find((a) => a.label === 'Growth')
+      const cost = CREDIT_PACK_USD
+      if (growth && growth.amount >= cost) {
+        growth.amount -= cost
+        this.state.treasury.cash -= cost
+      }
+      this.chargeCost(cost)
+      const live = await rechargeLlmCredits(CREDIT_PACK)
+      this.state.credits.balance += CREDIT_PACK
+      this.state.credits.bought++
+      this.state.credits.lastBuyAt = Date.now()
+      this.state.credits.lastPack = CREDIT_PACK
+      this.state.credits.lastCost = cost
+      this.state.credits.lastBuyer = 'Credit Buyer'
+      this.state.transactions.push({
+        id: this.nextId++,
+        at: Date.now(),
+        rail: 'Stripe',
+        plan: 'credit pack',
+        amount: -cost,
+        balance: this.state.mrr,
+      })
+      if (this.state.transactions.length > 40) this.state.transactions.shift()
+      this.log(
+        'finance',
+        'Credit Buyer',
+        `Bought ${CREDIT_PACK} credits for $${cost} (mock pack) — asked by ${askedBy.split(' · ')[0]}`,
+        [live?.ok ? 'backend recharged' : 'local pack', `${this.state.credits.balance} left`],
+        `-$${cost}`,
+      )
+      if (this.state.llm && live?.ok) {
+        this.state.llm.callsMax += live.added
+        if (this.state.llm.remaining != null) this.state.llm.remaining += live.added
+      }
+      this.emit()
+    } finally {
+      this.creditBusy = false
+    }
+  }
+
+  private async runCreditLoop() {
+    await this.sleep(8000)
+    for (;;) {
+      try {
+        if (shouldBuyCredits(this.state.credits)) await this.buyCredits('Credit Buyer')
+      } catch (e) {
+        console.error('[engine] credit buy failed:', e)
+      }
+      await this.sleep(20000)
+    }
+  }
+
   private async runBankLoop() {
     await this.sleep(20000)
     for (;;) {
@@ -2027,7 +2172,7 @@ class Engine {
       const text = await this.agentBrain(
         'CFO Agent',
         'anthropic',
-        `You are the CFO Agent of Business_Agent, an autonomous company. You manage the operating account at ${bank.name} (balance $${bank.balance.toLocaleString()}). Reply with ONLY JSON: {"from": "<category>", "to": "<category>", "pts": 1|2, "reason": "<one sentence>"} — move 1-2 percentage points between two existing categories, or {"from": null} to hold.`,
+        `You are the CFO Agent of ${COMPANY_NAME}, an autonomous company. You manage the operating account at ${bank.name} (balance $${bank.balance.toLocaleString()}). Reply with ONLY JSON: {"from": "<category>", "to": "<category>", "pts": 1|2, "reason": "<one sentence>"} — move 1-2 percentage points between two existing categories, or {"from": null} to hold.`,
         `Current allocation: ${labels}.\nRevenue today (Stripe ${rev?.mode ?? 'off'}): $${((rev?.grossCents ?? 0) / 100).toFixed(2)} across ${rev?.count ?? 0} payments.\nLLM spend today: $${this.state.spendToday.toFixed(2)}.\nDecide one small rebalance (or hold) as JSON only.`,
         140,
       )
@@ -2123,6 +2268,89 @@ class Engine {
     }
     this.setNode('support', 'idle')
     this.emit()
+  }
+
+  // Finance-mode button: hire a Terac human for legal finances. The page is /legal.
+  hireLegalFinance = async (): Promise<void> => {
+    const job = this.state.legalFinance
+    if (job.status === 'hiring' || job.status === 'waiting') return
+    if (this.teracHiresUsed >= this.TERAC_HIRE_BUDGET) {
+      job.status = 'error'
+      job.verdict = 'Session hire budget (1) already used'
+      this.log('alerts', 'Terac Liaison', 'Legal-finance hire skipped — budget already used', ['budget'])
+      this.emit()
+      return
+    }
+    this.teracHiresUsed++
+    const bank = this.state.bank
+    const rev = this.state.stripeToday
+    job.status = 'hiring'
+    job.verdict = null
+    job.jobId = null
+    job.expert = null
+    job.dashboardUrl = null
+    job.title = 'Legal finances'
+    this.setNode('terac', 'acting', 'hiring legal-finance reviewer…')
+    this.log('alerts', 'Terac Liaison', 'Hiring a human to review legal finances', ['terac.com', '/legal'])
+    this.emit()
+    try {
+      const hired = await hireLegalReview({
+        bankName: bank.name,
+        balance: bank.balance,
+        alloc: bank.alloc,
+        rationale: bank.note ?? 'CFO division',
+        revenueToday: rev?.live ? `$${(rev.grossCents / 100).toFixed(2)} Stripe ${rev.mode}` : 'Stripe off',
+      })
+      job.live = hired.live
+      job.jobId = hired.jobId || null
+      job.quote = hired.quote
+      job.dashboardUrl = hired.dashboardUrl
+      job.verdict = hired.reason
+      if (hired.verdict === 'error' || !hired.jobId) {
+        if (/412|401|insufficient balance|invalid or expired/i.test(hired.reason)) this.teracHiresUsed--
+        job.status = 'error'
+        this.log('alerts', 'Terac Liaison', `Legal-finance hire failed — ${hired.reason.slice(0, 100)}`, ['no hire'])
+        this.setNode('terac', 'idle')
+        this.emit()
+        return
+      }
+      job.status = 'waiting'
+      this.log('alerts', 'Terac Liaison', `Legal finances sent to Terac — waiting on a human`, [hired.jobId, 'live'])
+      this.setNode('terac', 'acting', 'waiting on legal-finance reviewer…')
+      this.emit()
+      let polls = 0
+      const t = setInterval(() => {
+        polls++
+        if (polls > 20 || !job.jobId || job.status !== 'waiting') {
+          clearInterval(t)
+          return
+        }
+        void pollLegalReview(job.jobId)
+          .then((v) => {
+            if (v.verdict === 'waiting') return
+            job.expert = v.expert
+            job.verdict = v.reason
+            job.status = v.verdict === 'approved' ? 'approved' : 'revised'
+            this.log(
+              'alerts',
+              'Terac Liaison',
+              `${v.expert ?? 'Human'} ${v.verdict === 'approved' ? 'approved' : 'flagged'} legal finances — ${v.reason.slice(0, 90)}`,
+              [v.verdict],
+            )
+            this.setNode('terac', 'idle')
+            clearInterval(t)
+            this.emit()
+          })
+          .catch(() => undefined)
+      }, 12_000)
+      this.timers.push(t as unknown as ReturnType<typeof setTimeout>)
+    } catch (e) {
+      job.status = 'error'
+      job.verdict = (e instanceof Error ? e.message : String(e)).slice(0, 180)
+      this.log('alerts', 'Terac Liaison', `Legal-finance hire failed — ${job.verdict}`, ['error'])
+      this.setNode('terac', 'idle')
+      this.emit()
+    }
   }
 
   // ── Support: inbound texts triaged, drafted, QA'd, and answered ──
@@ -2269,7 +2497,7 @@ class Engine {
   }
 
   setGithubRepo = (_repo: string) => {
-    // Product is pinned to AgentBasis/agentbasis-python-sdk.
+    // Product ships to GITHUB_REPO from .env.
   }
 
   applyGithubScan = (scan: GithubScan) => {
@@ -2385,6 +2613,19 @@ class Engine {
     }
   }
 
+  private async refreshTeracMcp() {
+    const st = await refreshTeracStatus()
+    if (st.mcp) this.state.teracMcp = st.mcp
+    else this.state.teracMcp = { ...blankTeracMcp(), error: st.live ? 'MCP handshake pending' : 'Terac key missing' }
+    if (st.mcp?.live) {
+      const org = st.mcp.org ? ` — ${st.mcp.org}` : ''
+      this.log('ceo', 'Orchestrator', `Terac MCP connected${org} · ${st.mcp.tools.length} tools`, ['terac mcp'])
+    } else if (st.live) {
+      this.log('ceo', 'Orchestrator', `Terac REST live, MCP not yet — ${this.state.teracMcp.error ?? 'handshake failed'}`, ['terac mcp'])
+    }
+    this.emit()
+  }
+
   private async runGithubLoop() {
     await this.sleep(1200)
     await this.scanGithub()
@@ -2436,7 +2677,7 @@ class Engine {
       this.log('alerts', 'Changelog Scout', `${c.name}: ${entry.text}`, ['matrix gap'])
       await S(1200)
       this.llm('Gap Analyst', 'Anthropic', 'claude-haiku-4-5', 0.008)
-      entry.counter = 'product ship loop is revising the python SDK on GitHub'
+      entry.counter = 'product ship loop is revising the repo on GitHub'
       this.log('ceo', 'Orchestrator', `Counter to ${c.name}: ${entry.counter}`, [cap.label])
       c.status = 'watching'
       this.emit()
@@ -2499,12 +2740,12 @@ class Engine {
       id: this.nextId++,
       at: Date.now(),
       comp: item.rival,
-      text: `research: ${item.name} — the python SDK is missing it`,
+      text: `research: ${item.name} — our product is missing it`,
       counter: 'forwarded to product — Repo Agent shipping to GitHub',
     }
     this.state.intel.push(intel)
     if (this.state.intel.length > 12) this.state.intel.shift()
-    this.log('alerts', 'Changelog Scout', `${item.rival}: ${intel.text}`, ['sdk gap'])
+    this.log('alerts', 'Changelog Scout', `${item.rival}: ${intel.text}`, ['product gap'])
     return this.pushShipJob({
       capId: item.id,
       feature: item.name,
@@ -2564,6 +2805,7 @@ class Engine {
       await S(1400)
       scout.status = 'done'
       scout.note = `${job.rival} has ${job.feature}`
+      if (LIVE_ONLY) this.spendCredit('Changelog Scout')
 
       gap.status = 'working'
       this.setNode('risk', 'acting', 'diffing matrix…')
@@ -2572,6 +2814,7 @@ class Engine {
       await S(1600)
       gap.status = 'done'
       gap.note = `we do not have ${job.feature}`
+      if (LIVE_ONLY) this.spendCredit('Gap Analyst')
 
       writer.status = 'working'
       this.setNode('manifest', 'acting', 'writing brief…')
@@ -2580,6 +2823,7 @@ class Engine {
       await S(1500)
       writer.status = 'done'
       writer.note = 'brief forwarded to product'
+      if (LIVE_ONLY) this.spendCredit('Brief Writer')
       job.stage = 'briefed'
       this.log('alerts', 'Brief Writer', `Forwarded to product: build ${job.feature}`, [job.rival, 'brief'])
       this.setNode('risk', 'idle')
@@ -2588,14 +2832,34 @@ class Engine {
 
       await this.buildPullRequest(job)
       if (this.shipHalted(job)) return
-      if (job.pr?.merged) {
+      if (!job.pr) return
+      if (SHIP_TERAC_ARMED) {
+        await this.runVerifyGate(job)
+        if (job.gate.verdict !== 'approved') {
+          job.stage = 'pr-open'
+          this.ensureShipFeature(job)
+          this.emit()
+          return
+        }
+        const merged = await mergeGithubPr(job.pr.number)
+        if (!merged.merged) {
+          job.stage = 'pr-open'
+          job.gate.reason = merged.error ?? `PR #${job.pr.number} opened — merge failed`
+          this.log('product', 'Repo Agent', job.gate.reason, [job.pr.file])
+          this.patchIntel(job, `PR #${job.pr.number} open — waiting to merge`)
+          this.emit()
+          return
+        }
+        job.pr.merged = true
+        if (merged.sha) job.pr.sha = merged.sha.slice(0, 7)
+      }
+      if (job.pr.merged) {
         await this.mergeShip(job)
-      } else if (job.pr) {
-        job.gate.reason = job.pr.live
-          ? (job.gate.reason ?? `PR #${job.pr.number} opened but not merged`)
-          : (job.gate.reason ?? 'GitHub write skipped — token off')
-        this.patchIntel(job, `PR #${job.pr.number} ready — not merged`)
-        this.log('product', 'Repo Agent', job.gate.reason, [job.pr.file])
+      } else {
+        job.stage = 'pr-open'
+        job.gate.reason = `PR #${job.pr.number} opened on ${PRODUCT_REPO} — waiting on review`
+        this.patchIntel(job, `PR #${job.pr.number} open for review`)
+        this.log('product', 'Repo Agent', job.gate.reason, [job.pr.file, job.pr.url ?? PRODUCT_REPO])
         this.emit()
       }
     } catch (e) {
@@ -2679,9 +2943,15 @@ class Engine {
       existing.status = job.stage === 'shipped' || pr.merged ? 'shipped' : 'progress'
       existing.summary = job.summary
       existing.file = pr.file
-      existing.chips = pr.merged
-        ? [`PR #${pr.number}`, pr.file, pr.sha]
-        : [`PR #${pr.number} · draft`, `branch: ${pr.branch}`, pr.sha]
+      existing.chips = [
+        pr.merged ? `PR #${pr.number}` : `PR #${pr.number} · draft`,
+        ...(pr.merged ? [] : [`branch: ${pr.branch}`]),
+        pr.sha,
+        ...(() => {
+          const v = teracVerifyLabel(job)
+          return v === 'verified' ? ['Terac verified'] : v === 'reviewing' ? ['Terac reviewing'] : ['Terac not verified']
+        })(),
+      ]
       if (existing.status === 'shipped' && !existing.shippedAt) existing.shippedAt = Date.now()
       job.featureId = existing.id
       return
@@ -2691,7 +2961,7 @@ class Engine {
       name: job.feature,
       summary: job.summary,
       status: 'progress',
-      chips: [`PR #${pr.number} · draft`, `branch: ${pr.branch}`, pr.sha],
+      chips: [`PR #${pr.number} · draft`, `branch: ${pr.branch}`, pr.sha, 'Terac not verified'],
       file: pr.file,
     }
     this.state.features.push(f)
@@ -2730,13 +3000,14 @@ class Engine {
     job.gate.reason = hired.reason
 
     if (hired.verdict === 'error') {
-      job.stage = 'blocked'
+      job.stage = 'pr-open'
       job.gate.status = 'error'
-      this.teracShipBlocked = true
-      this.log('alerts', 'Terac Liaison', `No verifier for PR #${pr.number} — ${hired.reason.slice(0, 90)}`, [
+      job.gate.verdict = null
+      this.log('alerts', 'Terac Liaison', `PR #${pr.number} opened — Terac not verified (${hired.reason.slice(0, 80)})`, [
         hired.live ? 'hire failed' : 'needs key',
       ])
-      this.patchIntel(job, `PR #${pr.number} blocked — Terac did not hire`)
+      this.patchIntel(job, `PR #${pr.number} open — Terac not verified`)
+      this.ensureShipFeature(job)
       this.setNode('terac', 'idle')
       this.emit()
       return
@@ -2754,24 +3025,27 @@ class Engine {
     if (v.verdict === 'approved') {
       job.gate.status = 'approved'
       job.gate.verdict = 'approved'
-      this.log('alerts', 'Terac Liaison', `${v.expert ?? 'Terac expert'}: research → PR holds — ${v.reason.slice(0, 100)}`, [
-        'verify',
+      this.log('alerts', 'Terac Liaison', `${v.expert ?? 'Terac expert'}: Terac verified PR #${pr.number} — ${v.reason.slice(0, 100)}`, [
+        'verified',
       ])
-      this.patchIntel(job, `PR #${pr.number} verified — shipping`)
+      this.patchIntel(job, `PR #${pr.number} Terac verified — shipping`)
+      this.ensureShipFeature(job)
     } else if (v.verdict === 'rejected') {
       job.gate.status = 'revised'
       job.gate.verdict = 'rejected'
-      job.stage = 'rejected'
-      this.log('alerts', 'Terac Liaison', `${v.expert ?? 'Terac expert'}: research → PR rejected — ${v.reason.slice(0, 100)}`, [
-        'reject',
+      job.stage = 'pr-open'
+      this.log('alerts', 'Terac Liaison', `${v.expert ?? 'Terac expert'}: Terac not verified PR #${pr.number} — ${v.reason.slice(0, 100)}`, [
+        'not-verified',
       ])
-      this.patchIntel(job, `PR #${pr.number} rejected by Terac`)
+      this.patchIntel(job, `PR #${pr.number} Terac not verified`)
+      this.ensureShipFeature(job)
     } else {
-      job.stage = 'blocked'
+      job.stage = 'pr-open'
       job.gate.status = 'error'
       job.gate.reason = v.reason
-      this.log('alerts', 'Terac Liaison', v.reason, ['error'])
-      this.patchIntel(job, `PR #${pr.number} blocked — waiting on Terac`)
+      this.log('alerts', 'Terac Liaison', `PR #${pr.number} still open — Terac not verified. ${v.reason}`, ['error'])
+      this.patchIntel(job, `PR #${pr.number} Terac not verified`)
+      this.ensureShipFeature(job)
     }
     this.setNode('terac', 'idle')
     this.emit()
@@ -2851,7 +3125,7 @@ class Engine {
           if (next) {
             const job = this.openSdkShipJob(next)
             await this.runShipPipeline(job)
-            if (job.stage === 'shipped') this.shipsThisSession++
+            if (job.pr?.number || job.stage === 'shipped') this.shipsThisSession++
           }
         }
       } catch (e) {
@@ -2859,6 +3133,18 @@ class Engine {
       }
       await this.sleep(180000)
     }
+  }
+
+  shipNext = (): boolean => {
+    if (this.shipBusy) return false
+    if (this.shipsThisSession >= MAX_SDK_SHIPS) return false
+    const next = SDK_SHIPS.find((s) => !this.shipCovers(s.id))
+    if (!next) return false
+    const job = this.openSdkShipJob(next)
+    void this.runShipPipeline(job).then(() => {
+      if (job.pr?.number || job.stage === 'shipped') this.shipsThisSession++
+    })
+    return true
   }
 
   private async waitForShipVerdict(jobId: string): Promise<{
@@ -2895,6 +3181,7 @@ class Engine {
     if (this.state.llmCalls.length > 60) this.state.llmCalls.shift()
     this.state.spendToday += r.costUsd
     this.chargeCost(r.costUsd)
+    this.spendCredit(agent)
     this.emit()
   }
 
@@ -2963,6 +3250,7 @@ class Engine {
         `Connected to Alpaca crypto feed — live BTC · ETH · SOL · DOGE · AVAX${ORDERS_ENABLED ? ' · paper orders armed' : ''}`,
         ['data.alpaca.markets'],
       )
+      if (ORDERS_ENABLED) void this.syncPaperAccount()
     } catch {
       this.state.marketFeed = 'sim'
       this.log('finance', 'Market Desk', 'Alpaca feed unreachable — falling back to simulated prices')
@@ -2990,15 +3278,14 @@ class Engine {
 
   // ── Investment: five desk agents predict, rank, and deploy capital ──
   private async runInvestmentLoop() {
-    await this.sleep(14000)
+    await this.sleep(6000)
     for (;;) {
       try {
         await this.marketRound()
       } catch (e) {
         console.error('[engine] market round failed, continuing:', e)
       }
-      // real model calls run on a 5-minute cadence; sim can churn faster
-      await this.sleep(LIVE_ONLY ? 300_000 : 32000)
+      await this.sleep(45000)
     }
   }
 
@@ -3038,10 +3325,9 @@ class Engine {
         gate.expert = prior.expert
         gate.note = `${prior.note} · expert reading from ${mins}m ago — one hire per session`
       } else {
-        const desk = this.deskConfidence(round)
-        gate.status = 'desk'
-        gate.confidence = desk.confidence
-        gate.note = `${desk.note} · one Terac hire per session already used`
+        gate.status = 'error'
+        gate.confidence = null
+        gate.note = 'No Terac form filled this session — holding fills'
       }
       this.emit()
       return
@@ -3080,65 +3366,61 @@ class Engine {
       gate.dashboardUrl = hired.dashboardUrl
 
       if (hired.status === 'error') {
-        const desk = this.deskConfidence(round)
-        gate.status = 'desk'
-        gate.confidence = desk.confidence
-        gate.note = `${desk.note} · ${hired.reason.startsWith('Terac') ? '' : 'Terac: '}${hired.reason.slice(0, 90)}`
-        this.log('alerts', 'Terac Liaison', `No expert — desk consensus confidence ${desk.confidence}%. ${hired.reason.slice(0, 90)}`, [gate.live ? 'hire failed' : 'needs key'])
+        gate.status = 'error'
+        gate.confidence = null
+        gate.note = hired.reason
+        this.log('alerts', 'Terac Liaison', `No Terac form — holding the ${winAsset.symbol} fill. ${hired.reason.slice(0, 90)}`, [
+          hired.live ? 'hire failed' : 'needs key',
+        ])
         this.setNode('terac', 'idle')
         this.emit()
         return
       }
 
       gate.status = 'waiting'
-      this.log('alerts', 'Terac Liaison', `Opportunity live — waiting on expert confidence for ${winAsset.symbol}`, [hired.jobId, 'live'])
-      this.setNode('terac', 'acting', 'waiting on expert…')
+      this.log('alerts', 'Terac Liaison', `Opportunity live — waiting on the Terac form for ${winAsset.symbol}`, [hired.jobId, 'live'])
+      this.setNode('terac', 'acting', 'waiting on Terac form…')
       this.emit()
 
-      // give the expert ~30s with a handful of polls; the fill won't wait forever
-      for (let i = 0; i < 4; i++) {
-        await this.sleep(8000)
-        try {
-          const v = await pollTradeReview(hired.jobId)
-          if (v.status === 'done') {
-            if (v.confidence != null) {
-              gate.status = 'expert'
-              gate.confidence = v.confidence
-              gate.expert = v.expert
-              gate.note = v.reason
-              this.lastExpertReading = { confidence: v.confidence, expert: v.expert, note: v.reason, at: Date.now() }
-              this.log('alerts', 'Terac Liaison', `${v.expert ?? 'Terac expert'}: ${v.confidence}% confident — ${v.reason.slice(0, 100)}`, ['expert'])
-            } else {
-              const desk = this.deskConfidence(round)
-              gate.status = 'desk'
-              gate.confidence = desk.confidence
-              gate.note = `${desk.note} · expert answered without a confidence bucket`
-            }
-            this.setNode('terac', 'idle')
-            this.emit()
-            return
-          }
-        } catch (e) {
-          console.error('[terac] trade poll failed:', e)
-        }
+      const v = await this.waitForTradeVerdict(hired.jobId)
+      if (v.status === 'done' && v.confidence != null) {
+        gate.status = 'expert'
+        gate.confidence = v.confidence
+        gate.expert = v.expert
+        gate.note = v.reason
+        this.lastExpertReading = { confidence: v.confidence, expert: v.expert, note: v.reason, at: Date.now() }
+        this.log('alerts', 'Terac Liaison', `${v.expert ?? 'Terac expert'} filled the form — ${v.confidence}%: ${v.reason.slice(0, 100)}`, ['form'])
+      } else {
+        gate.status = 'error'
+        gate.note = v.reason
+        this.log('alerts', 'Terac Liaison', `Terac form incomplete — holding the fill. ${v.reason.slice(0, 90)}`, ['error'])
       }
-
-      // expert still out — deploy on desk consensus, keep polling in background
-      const desk = this.deskConfidence(round)
-      gate.confidence = desk.confidence
-      gate.note = `${desk.note} · expert still reviewing`
-      this.log('alerts', 'Terac Liaison', `Expert still reviewing — deploying on desk consensus ${desk.confidence}%`, [gate.jobId ?? '', 'waiting'])
-      this.startTradePoller(round)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      const desk = this.deskConfidence(round)
-      gate.status = 'desk'
-      gate.confidence = desk.confidence
-      gate.note = `${desk.note} · hire failed: ${msg.slice(0, 90)}`
-      this.log('alerts', 'Terac Liaison', `Hire failed — desk consensus confidence ${desk.confidence}%`, ['error'])
+      gate.status = 'error'
+      gate.note = msg.slice(0, 90)
+      this.log('alerts', 'Terac Liaison', `Hire failed — holding the fill. ${msg.slice(0, 90)}`, ['error'])
     }
     this.setNode('terac', 'idle')
     this.emit()
+  }
+
+  private async waitForTradeVerdict(jobId: string): Promise<{
+    status: 'done' | 'waiting' | 'error'
+    confidence: number | null
+    reason: string
+    expert: string | null
+  }> {
+    // The human is the gate. Poll until they submit the form; do not fill early.
+    for (;;) {
+      await this.sleep(12_000)
+      try {
+        const v = await pollTradeReview(jobId)
+        if (v.status !== 'waiting') return v
+      } catch (e) {
+        console.error('[engine] trade poll failed:', e)
+      }
+    }
   }
 
   private startTradePoller(round: MarketRound) {
@@ -3172,6 +3454,9 @@ class Engine {
   }
 
   private async marketRound() {
+    if (this.deskBusy) return
+    this.deskBusy = true
+    try {
     const S = this.sleep.bind(this)
     const round: MarketRound = {
       id: this.nextId++,
@@ -3179,7 +3464,7 @@ class Engine {
       preds: COMMITTEE.map((c) => ({ agent: c.agent, mono: c.mono, persona: c.persona, roi: null })),
       consensus: null,
       winner: null,
-      amount: [250, 400, 500, 600][Math.floor(Math.random() * 4)],
+      amount: [150, 200, 250, 300][Math.floor(Math.random() * 4)],
       status: 'predicting',
       orderId: null,
       entryPrice: null,
@@ -3203,9 +3488,9 @@ class Engine {
       .map((a) => `${a.symbol}: $${a.price.toPrecision(6)} · trailing-window change ${a.changePct.toFixed(2)}% · recent momentum ${this.momentum(a).toFixed(2)}%`)
       .join('\n')
     for (const pred of round.preds) {
-      await S(LIVE_ONLY ? 800 : 2000)
+      await S(LIVE_ONLY ? 280 : 2000)
       let real: Record<string, number> | null = null
-      if (this.llmAvailable()) {
+      if (!LIVE_ONLY && this.llmAvailable()) {
         const text = await this.agentBrain(
           `Market Desk · ${pred.agent}`,
           DESK_PROVIDER[pred.agent] ?? 'anthropic',
@@ -3233,6 +3518,7 @@ class Engine {
           }),
         )
         this.llm('Market Desk', 'Anthropic', 'claude-haiku-4-5', 0.007)
+        if (LIVE_ONLY) this.spendCredit(`Market Desk · ${pred.agent}`)
       }
       this.emit()
     }
@@ -3255,9 +3541,16 @@ class Engine {
     this.emit()
     await S(1800)
 
-    // Terac gate: hire a human crypto expert to state confidence in the
-    // trade before deploying — same shape as the audience claim-review gate
     await this.runTradeGate(round, winAsset)
+    const conf = round.terac.confidence
+    if (round.terac.status !== 'expert') {
+      this.log('finance', 'Market Desk', `Held ${winAsset.symbol} — waiting on the Terac form`, [round.terac.note ?? 'no form'])
+      return
+    }
+    if (conf == null || conf < 50) {
+      this.log('finance', 'Market Desk', `Terac form filled — ${conf ?? 0}% confidence, skipping the fill`, ['low'])
+      return
+    }
 
     // deploy into the top-ranked asset — allocation moves Growth → Crypto,
     // so treasury allocations still sum exactly to cash
@@ -3296,11 +3589,12 @@ class Engine {
       qty: amount / round.entryPrice,
       cost: amount,
       entry: round.entryPrice,
+      orderId: round.orderId,
     })
     if (this.state.positions.length > 12) this.state.positions.shift()
     const confStr =
       round.terac.confidence != null
-        ? ` · confidence ${round.terac.confidence}% (${round.terac.status === 'expert' ? 'Terac expert' : 'desk consensus'})`
+        ? ` · confidence ${round.terac.confidence}% (${round.terac.status === 'expert' ? 'Terac form' : 'prior form'})`
         : ''
     this.log(
       'finance',
@@ -3308,7 +3602,101 @@ class Engine {
       `Filled — BUY $${amount} ${winAsset.symbol} @ $${round.entryPrice.toLocaleString(undefined, { maximumFractionDigits: round.entryPrice < 1 ? 4 : 2 })}${confStr}`,
       [round.orderId, fillChip],
     )
+    void this.syncPaperAccount()
     this.emit()
+    } finally {
+      this.deskBusy = false
+    }
+  }
+
+  private applyRevenue() {
+    const mark = deskPnl(this.state.positions, this.state.assets, this.state.tradingRevenue)
+    this.state.unrealizedPnl = mark - this.state.tradingRevenue
+    const desk = Math.max(0, mark)
+    this.state.railTotals.Alpaca = Math.round(desk)
+    if (!LIVE_ONLY) return
+    const stripe = this.state.stripeToday?.live ? Math.round(this.state.stripeToday.grossCents / 100) : 0
+    const next = stripe + Math.round(desk)
+    if (next !== this.state.mrr) {
+      this.state.spark.push(next)
+      if (this.state.spark.length > 60) this.state.spark.shift()
+    }
+    this.state.mrr = next
+  }
+
+  private bookRealized(realized: number, label: string, chips: string[]) {
+    this.state.tradingRevenue += realized
+    this.state.treasury.cash += realized
+    const growth = this.state.treasury.alloc.find((a) => a.label === 'Growth')
+    if (growth) growth.amount += realized
+    this.applyRevenue()
+    this.state.transactions.push({
+      id: this.nextId++,
+      at: Date.now(),
+      rail: 'Alpaca',
+      plan: 'paper desk',
+      amount: realized,
+      balance: this.state.mrr,
+    })
+    if (this.state.transactions.length > 40) this.state.transactions.shift()
+    const sign = realized >= 0 ? '+' : ''
+    this.log('finance', 'Market Desk', `${label} — ${sign}$${realized.toFixed(2)} booked to revenue`, chips, `${sign}$${realized.toFixed(2)}`)
+    this.emit()
+  }
+
+  private harvestBusy = false
+
+  private async harvestPositions() {
+    if (this.harvestBusy || this.state.positions.length === 0) return
+    const now = Date.now()
+    const target = this.state.positions.find((p) => {
+      const asset = this.state.assets.find((a) => a.id === p.assetId)
+      if (!asset) return false
+      return shouldHarvest(now - p.at, p.cost, p.qty * asset.price)
+    })
+    if (!target) return
+    this.harvestBusy = true
+    try {
+      const asset = this.state.assets.find((a) => a.id === target.assetId)!
+      let exit = asset.price
+      let chip = 'sim close'
+      if (ORDERS_ENABLED && this.state.marketFeed === 'live') {
+        try {
+          const sold = await submitPaperSell(target.assetId, target.qty)
+          if (sold.filledPrice) exit = sold.filledPrice
+          chip = 'Alpaca paper sell'
+        } catch (e) {
+          this.log('finance', 'Market Desk', `Alpaca sell rejected — closing on the mark (${e instanceof Error ? e.message.slice(0, 60) : 'error'})`)
+        }
+      }
+      const proceeds = target.qty * exit
+      const realized = proceeds - target.cost
+      this.state.positions = this.state.positions.filter((p) => p.id !== target.id)
+      const crypto = this.state.treasury.alloc.find((a) => a.label === 'Crypto')
+      const growth = this.state.treasury.alloc.find((a) => a.label === 'Growth')
+      if (crypto) crypto.amount = Math.max(0, crypto.amount - target.cost)
+      if (growth) growth.amount += target.cost
+      this.bookRealized(realized, `Closed ${asset.symbol} @ $${exit.toLocaleString(undefined, { maximumFractionDigits: exit < 1 ? 4 : 2 })}`, [
+        chip,
+        realized >= 0 ? 'gain' : 'loss',
+      ])
+      void this.syncPaperAccount()
+    } finally {
+      this.harvestBusy = false
+    }
+  }
+
+  private async syncPaperAccount() {
+    const acct = await fetchPaperAccount()
+    if (!acct) return
+    this.state.paperEquity = acct.equity
+    this.emit()
+  }
+
+  tradeNow = (): boolean => {
+    if (this.deskBusy) return false
+    void this.marketRound()
+    return true
   }
 
   private async committeeRound() {
@@ -3449,7 +3837,7 @@ class Engine {
         real = await this.agentBrain(
           d.agent,
           WRITER_PROVIDER[d.agent] ?? 'anthropic',
-          `You are "${d.agent}", a copywriter agent at Business_Agent with a ${d.voice} voice. Write ONE post for the @business_agent X account announcing a just-committed feature of the AgentBasis python SDK (LLM observability). Under 240 characters. No hashtags, no emoji, no quotes around the post. Reply with the post text only.`,
+          `You are "${d.agent}", a copywriter agent at ${COMPANY_NAME} with a ${d.voice} voice. Write ONE post announcing a just-committed feature of the ${PRODUCT_REPO} cockpit. Under 240 characters. No hashtags, no emoji, no quotes around the post. Reply with the post text only.`,
           `Feature just committed: ${feature}`,
           120,
         )
@@ -3513,7 +3901,7 @@ class Engine {
     this.emit()
     await S(1000)
 
-    await this.runTeracGate(feature, camp, winner, tally)
+    await this.publishWinner(feature, camp, winner, tally)
     return { text: winner.text ?? WRITER_COPY[winner.agent](feature), predicted: Math.round(80 + tally * 18) }
   }
 
